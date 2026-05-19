@@ -1,0 +1,15 @@
+# env files
+.env
+**/.env
+backend/.env
+chatbot/.env
+
+# expo
+.expo/
+
+# dependencies
+node_modules/
+**/node_modules/
+
+# logs
+*.log
