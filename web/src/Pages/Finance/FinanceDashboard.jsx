@@ -24,9 +24,14 @@ export default function FinanceDashboard() {
   const [recentTransactions, setRecentTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  
+  // New state for current semester
+  const [currentSemester, setCurrentSemester] = useState(null);
+  const [semesterLoading, setSemesterLoading] = useState(true);
 
   useEffect(() => {
     fetchStats();
+    fetchCurrentSemester();
   }, []);
 
   const fetchStats = async () => {
@@ -46,6 +51,44 @@ export default function FinanceDashboard() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Fetch current semester from backend
+  const fetchCurrentSemester = async () => {
+    setSemesterLoading(true);
+    try {
+      const res = await api.get('/api/admin/semesters/current');
+      if (res.data.success && res.data.data) {
+        setCurrentSemester(res.data.data);
+      } else {
+        // If no current semester set, fetch the latest semester
+        const allSemestersRes = await api.get('/api/admin/semesters');
+        if (allSemestersRes.data.success && allSemestersRes.data.data.length > 0) {
+          // Get the most recent semester by start date
+          const latest = allSemestersRes.data.data.sort((a, b) => 
+            new Date(b.start_date) - new Date(a.start_date)
+          )[0];
+          setCurrentSemester(latest);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch current semester:', err);
+    } finally {
+      setSemesterLoading(false);
+    }
+  };
+
+  // Format semester display text
+  const getSemesterDisplay = () => {
+    if (semesterLoading) return 'Loading...';
+    if (!currentSemester) return 'Not Set';
+    return `${currentSemester.term} ${currentSemester.academic_year}`;
+  };
+
+  const getAcademicYearDisplay = () => {
+    if (semesterLoading) return 'Loading...';
+    if (!currentSemester) return 'Not Set';
+    return currentSemester.academic_year;
   };
 
   const statCards = [
@@ -71,11 +114,11 @@ export default function FinanceDashboard() {
       desc: 'All time records',
     },
     {
-      title: 'Academic Year',
-      value: '2024-25',
+      title: 'Current Semester',
+      value: getSemesterDisplay(),
       icon: <CalendarOutlined />,
       color: '#d97706', bg: '#FFFBEB',
-      desc: 'Spring 2025',
+      desc: semesterLoading ? 'Loading...' : (currentSemester?.is_current ? 'Active semester' : 'Latest semester'),
     },
   ];
 
@@ -91,8 +134,8 @@ export default function FinanceDashboard() {
     { label: 'Officer ID', value: user.id, icon: <IdcardOutlined /> },
     { label: 'Role', value: 'Finance Officer', icon: <DollarOutlined /> },
     { label: 'Portal', value: 'Web Finance Portal', icon: <GlobalOutlined /> },
-    { label: 'Academic Year', value: '2024 - 2025', icon: <CalendarOutlined /> },
-    { label: 'Semester', value: 'Spring 2025', icon: <CalendarOutlined /> },
+    { label: 'Academic Year', value: getAcademicYearDisplay(), icon: <CalendarOutlined /> },
+    { label: 'Semester', value: getSemesterDisplay(), icon: <CalendarOutlined /> },
   ];
 
   const transactionColumns = [
@@ -170,7 +213,7 @@ export default function FinanceDashboard() {
             {user.name}
           </div>
           <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>
-            Antonine University — Finance Portal · Spring 2025
+            Antonine University — Finance Portal · {getSemesterDisplay()}
           </Text>
         </div>
         <div style={{
@@ -204,7 +247,7 @@ export default function FinanceDashboard() {
                     fontSize: 28, fontWeight: 800, color: '#1E293B',
                     lineHeight: 1.1, margin: '6px 0 4px',
                   }}>
-                    {card.value === null
+                    {card.value === null && card.title !== 'Current Semester'
                       ? <Spin size="small" />
                       : card.value
                     }
@@ -319,7 +362,9 @@ export default function FinanceDashboard() {
                   <Text style={{ color: '#64748B', fontSize: 13 }}>{item.label}</Text>
                 </div>
                 <Text style={{ fontWeight: 600, color: '#1E293B', fontSize: 13 }}>
-                  {item.value}
+                  {semesterLoading && (item.label === 'Academic Year' || item.label === 'Semester') 
+                    ? <Spin size="small" /> 
+                    : item.value}
                 </Text>
               </div>
             ))}

@@ -16,6 +16,9 @@ import DeactivateFinanceOfficer from './Pages/Admin/DeactivateFinanceOfficer';
 
 import CourseManagement from './Pages/Admin/CourseManagement';
 
+import SemesterManagement from './Pages/Admin/SemesterManagement';
+
+
 import './App.css';
 
 const PrivateRoute = ({ children, role }) => {
@@ -72,6 +75,11 @@ export default function App() {
         {/* Course Management */}
         <Route path="/admin/course-management" element={
           <PrivateRoute role="admin"><CourseManagement /></PrivateRoute>
+        } />
+
+        {/* Semester Management */}
+        <Route path="/admin/semesters" element={
+          <PrivateRoute role="admin"><SemesterManagement /></PrivateRoute>
         } />
 
         {/* Finance Officer Portal Routes */}

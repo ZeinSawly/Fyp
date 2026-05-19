@@ -30,10 +30,17 @@ const {
     addCourseSchedule, 
     getSectionSchedule, 
     getAllMajors,
-    getStudentSchedule,
-    getStudentEnrolledCourses,
-    getAvailableCoursesForSemester
+    getCoursesBySemester,
 } = require('../controllers/courseController');
+
+const {
+    getSemesters,
+    getCurrentSemester,
+    createSemester,
+    updateSemester,
+    setCurrentSemester,
+    deleteSemester
+} = require('../controllers/semesterController');
 
 const { verifyToken } = require('../middlewares/authMiddleware');
 
@@ -74,6 +81,9 @@ router.get('/majors-list', getAllMajors);
 router.get('/courses', getAllCourses);
 router.post('/courses/add', addCourse);
 
+// Courses by semester (for student enrollment)
+router.get('/courses/by-semester', getCoursesBySemester);
+
 // Course Sections (with semester)
 router.get('/courses/:course_id/sections', getCourseSections);
 router.post('/courses/sections/add', addCourseSection);
@@ -89,5 +99,13 @@ router.get('/courses-for-dropdown', getAllCoursesForDropdown);
 router.post('/grade-component', addGradeComponent);
 router.get('/grade-component/:course_id', getCourseComponents);
 router.delete('/grade-component/:component_id', deleteGradeComponent);
+
+// Semester routes
+router.get('/semesters', getSemesters);
+router.get('/semesters/current', getCurrentSemester);
+router.post('/semesters', createSemester);
+router.put('/semesters/:id', updateSemester);
+router.put('/semesters/:id/set-current', setCurrentSemester);
+router.delete('/semesters/:id', deleteSemester);
 
 module.exports = router;

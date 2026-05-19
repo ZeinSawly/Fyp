@@ -63,69 +63,124 @@ const addCourse = async (req, res) => {
 const getCourseSections = async (req, res) => {
   const { course_id } = req.params;
   
-  console.log('getCourseSections called with course_id:', course_id);
-  
   try {
-    const [sections] = await db.promise().query(
-      `SELECT 
-        cs.id, cs.section_code, cs.seats, cs.max_seats,
-        u.name AS instructor_name, u.id AS instructor_id,
-        d.name AS department
-       FROM course_sections cs
-       LEFT JOIN instructors i ON cs.instructor_id = i.user_id
-       LEFT JOIN users u ON i.user_id = u.id
-       LEFT JOIN departments d ON i.department = d.id
-       WHERE cs.course_id = ?
-       ORDER BY cs.section_code ASC`,
-      [course_id]
-    );
-    
-    console.log('Sections found:', sections.length);
-    return res.status(200).json({ success: true, data: sections });
-    
+      const [sections] = await db.promise().query(
+          `SELECT 
+              cs.id, cs.section_code, cs.seats, cs.max_seats, cs.semester_id,
+              s.name as semester_name, s.code as semester_code,
+              u.name AS instructor_name, u.id AS instructor_id,
+              d.name AS department
+           FROM course_sections cs
+           LEFT JOIN semesters s ON cs.semester_id = s.id
+           LEFT JOIN instructors i ON cs.instructor_id = i.user_id
+           LEFT JOIN users u ON i.user_id = u.id
+           LEFT JOIN departments d ON i.department = d.id
+           WHERE cs.course_id = ?
+           ORDER BY s.academic_year DESC, s.term DESC, cs.section_code ASC`,
+          [course_id]
+      );
+      
+      return res.status(200).json({ success: true, data: sections });
+      
   } catch (error) {
-    console.error('getCourseSections error:', error.message);
-    return res.status(500).json({ success: false, message: error.message });
+      return res.status(500).json({ success: false, message: error.message });
   }
 };
 
 // ─── ADD COURSE SECTION ───
 const addCourseSection = async (req, res) => {
-  const { course_id, instructor_id, section_code, max_seats } = req.body;
+  const { course_id, instructor_id, section_code, max_seats, semester_id } = req.body;
 
-  if (!course_id || !section_code || !max_seats) {
-    return res.status(400).json({ message: 'course_id, section_code and max_seats are required' });
+  if (!course_id || !section_code || !max_seats || !semester_id) {
+      return res.status(400).json({ 
+          message: 'course_id, section_code, max_seats and semester_id are required' 
+      });
   }
 
   try {
-    // Check course exists
-    const [course] = await db.promise().query(
-      `SELECT id FROM courses WHERE id = ?`, [course_id]
-    );
-    if (course.length === 0) {
-      return res.status(404).json({ message: 'Course not found' });
-    }
+      // Check semester exists
+      const [semester] = await db.promise().query(
+          `SELECT id FROM semesters WHERE id = ?`, [semester_id]
+      );
+      if (semester.length === 0) {
+          return res.status(404).json({ message: 'Semester not found' });
+      }
 
-    // Check section code not duplicate for same course
-    const [existing] = await db.promise().query(
-      `SELECT id FROM course_sections WHERE course_id = ? AND section_code = ?`,
-      [course_id, section_code]
-    );
-    if (existing.length > 0) {
-      return res.status(400).json({ message: 'Section code already exists for this course' });
-    }
+      // Check course exists
+      const [course] = await db.promise().query(
+          `SELECT id FROM courses WHERE id = ?`, [course_id]
+      );
+      if (course.length === 0) {
+          return res.status(404).json({ message: 'Course not found' });
+      }
 
-    await db.promise().query(
-      `INSERT INTO course_sections (course_id, instructor_id, section_code, max_seats, seats)
-       VALUES (?, ?, ?, ?, ?)`,
-      [course_id, instructor_id || null, section_code, max_seats, max_seats]
-    );
+      // Check section code not duplicate for same course AND same semester
+      const [existing] = await db.promise().query(
+          `SELECT id FROM course_sections 
+           WHERE course_id = ? AND section_code = ? AND semester_id = ?`,
+          [course_id, section_code, semester_id]
+      );
+      if (existing.length > 0) {
+          return res.status(400).json({ 
+              message: 'Section code already exists for this course in this semester' 
+          });
+      }
 
-    return res.status(201).json({ message: 'Section added successfully' });
+      await db.promise().query(
+          `INSERT INTO course_sections (course_id, instructor_id, section_code, max_seats, seats, semester_id)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [course_id, instructor_id || null, section_code, max_seats, max_seats, semester_id]
+      );
+
+      return res.status(201).json({ message: 'Section added successfully' });
 
   } catch (error) {
-    console.error('Add section error:', error);
-    return res.status(500).json({ message: 'Server error', error: error.message });
+      console.error('Add section error:', error);
+      return res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+const getCoursesBySemester = async (req, res) => {
+  const { semester_id, student_id } = req.query;
+  
+  try {
+      // Get semester details
+      const [semester] = await db.promise().query(
+          `SELECT * FROM semesters WHERE id = ?`, [semester_id]
+      );
+      if (semester.length === 0) {
+          return res.status(404).json({ success: false, message: 'Semester not found' });
+      }
+      
+      const term = semester[0].term;
+      
+      // Get courses offered in this semester (based on offered_in)
+      const [courses] = await db.promise().query(
+          `SELECT c.id, c.name, c.description, c.credits, c.type, c.offered_in, c.major_id,
+                  m.name as major_name,
+                  CASE 
+                      WHEN EXISTS (
+                          SELECT 1 FROM course_sections cs 
+                          JOIN course_enrollments ce ON cs.id = ce.section_id 
+                          WHERE cs.course_id = c.id AND ce.student_id = ? AND cs.semester_id = ?
+                      ) THEN 'enrolled'
+                      WHEN EXISTS (
+                          SELECT 1 FROM shopping_cart sc 
+                          JOIN course_sections cs ON sc.section_id = cs.id
+                          WHERE cs.course_id = c.id AND sc.student_id = ? AND cs.semester_id = ?
+                      ) THEN 'in_cart'
+                      ELSE 'available'
+                  END AS status
+           FROM courses c
+           LEFT JOIN majors m ON c.major_id = m.id
+           WHERE c.offered_in IN (?, 'Both')
+           ORDER BY c.name`,
+          [student_id || null, semester_id, student_id || null, semester_id, term]
+      );
+      
+      return res.status(200).json({ success: true, data: courses, semester: semester[0] });
+  } catch (error) {
+      return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
@@ -243,5 +298,5 @@ module.exports = {
   getCourseSections, addCourseSection,
   getAllInstructors,
   addCourseSchedule, getSectionSchedule,
-  getAllMajors,
+  getAllMajors, getCoursesBySemester
 };

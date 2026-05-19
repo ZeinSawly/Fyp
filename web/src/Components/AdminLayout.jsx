@@ -6,6 +6,7 @@ import {
   CheckCircleOutlined, LogoutOutlined, MenuFoldOutlined,
   MenuUnfoldOutlined, BankOutlined, SafetyCertificateOutlined,
   BellOutlined,
+  CalendarOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -50,7 +51,12 @@ export default function AdminLayout({ children, title = 'Dashboard' }) {
       key: 'courses', icon: <BookOutlined />, label: 'Course Management',
       children: [
         { key: '/admin/course-management', icon: <BookOutlined />, label: 'Manage Courses' },
-        { key: '/admin/grade-components', icon: <CheckCircleOutlined />, label: 'Grade Components' },
+      ],
+    },
+    {
+      key: 'semesters', icon: <CalendarOutlined />, label: 'Semester Management',
+      children: [
+        { key: '/admin/semesters', icon: <BookOutlined />, label: 'Manage Semesters' },
       ],
     },
     { key: '/admin/grade-components', icon: <BookOutlined />, label: 'Grade Components' },

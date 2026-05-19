@@ -101,6 +101,7 @@ export default function AdminDashboard() {
     { label: 'Add Section', icon: <PlusOutlined />, color: '#2f855a', bg: '#F0FFF4', path: '/admin/course-management', desc: 'Create course sections' },
     { label: 'Set Schedule', icon: <ScheduleOutlined />, color: '#d97706', bg: '#FFFBEB', path: '/admin/course-management', desc: 'Assign time & room' },
     { label: 'Grade Components', icon: <BarChartOutlined />, color: '#6b46c1', bg: '#FAF5FF', path: '/admin/grade-components', desc: 'Setup grading per course' },
+    { label: 'Semesters', icon: <CalendarOutlined />, color: '#6b46c1', bg: '#FAF5FF', path: '/admin/semesters', desc: 'Manage academic semesters' },
   ];
 
   const systemInfo = [
