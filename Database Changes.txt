@@ -1,0 +1,131 @@
+For the Fees in the SIS, I created the following new tables + updates student transactions table:
+
+CREATE TABLE credit_pricing (
+  id INT NOT NULL AUTO_INCREMENT,
+  major_id INT NOT NULL,
+  price_per_credit DECIMAL(10,2) NOT NULL,
+  effective_from DATE NOT NULL,
+  effective_until DATE DEFAULT NULL,  -- NULL = currently active
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  
+  PRIMARY KEY (id),
+  KEY idx_major (major_id),
+  KEY idx_effective (effective_from, effective_until),
+  
+  CONSTRAINT fk_pricing_major FOREIGN KEY (major_id) REFERENCES majors(id) ON DELETE CASCADE
+);
+
+
+CREATE TABLE fee_types (
+  id INT NOT NULL AUTO_INCREMENT,
+  code VARCHAR(30) NOT NULL UNIQUE,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  charge_basis ENUM('per_semester', 'one_time', 'on_demand') NOT NULL,
+  is_active TINYINT(1) DEFAULT 1,
+  
+  PRIMARY KEY (id)
+);
+
+
+CREATE TABLE fee_pricing (
+  id INT NOT NULL AUTO_INCREMENT,
+  fee_type_id INT NOT NULL,
+  major_id INT DEFAULT NULL,  -- NULL = applies to all majors
+  amount DECIMAL(10,2) NOT NULL,
+  effective_from DATE NOT NULL,
+  effective_until DATE DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  
+  PRIMARY KEY (id),
+  KEY idx_fee_type (fee_type_id),
+  KEY idx_major (major_id),
+  
+  CONSTRAINT fk_fee_pricing_type FOREIGN KEY (fee_type_id) REFERENCES fee_types(id),
+  CONSTRAINT fk_fee_pricing_major FOREIGN KEY (major_id) REFERENCES majors(id)
+);
+
+
+-- Add semester_id (so you can group transactions by semester)
+ALTER TABLE student_financial_transactions
+  ADD COLUMN semester_id INT DEFAULT NULL AFTER student_id,
+  ADD COLUMN parent_transaction_id BIGINT DEFAULT NULL AFTER payment_id,
+  ADD COLUMN installment_number TINYINT DEFAULT NULL AFTER parent_transaction_id,
+  ADD COLUMN total_installments TINYINT DEFAULT NULL AFTER installment_number,
+  ADD CONSTRAINT fk_trans_semester FOREIGN KEY (semester_id) REFERENCES semesters(id),
+  ADD CONSTRAINT fk_trans_parent FOREIGN KEY (parent_transaction_id) REFERENCES student_financial_transactions(id);
+
+
+
+For the discount types for the students, I created the following tables + updated the student transactions table:
+
+
+CREATE TABLE discount_types (
+  id INT NOT NULL AUTO_INCREMENT,
+  code VARCHAR(30) NOT NULL UNIQUE,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  scope ENUM('semester', 'academic_year') NOT NULL,
+  calculation ENUM('percentage', 'fixed_amount') NOT NULL,
+  applies_to ENUM('tuition_only', 'tuition_and_fees', 'specific_fee') NOT NULL DEFAULT 'tuition_only',
+  is_active TINYINT(1) DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  
+  PRIMARY KEY (id)
+);
+
+INSERT INTO discount_types (code, name, description, scope, calculation, applies_to) VALUES
+  ('GPA_SCHOLARSHIP',  'GPA-Based Scholarship', 'Awarded based on previous semester GPA', 'semester',      'percentage',   'tuition_only'),
+  ('FINANCIAL_AID',    'Need-Based Financial Aid', 'Annual financial aid', 'academic_year', 'percentage',   'tuition_only'),
+  ('MERIT_AWARD',      'Merit Award', 'Awarded to top-performing students', 'semester',      'percentage',   'tuition_only'),
+  ('SIBLING_DISCOUNT', 'Sibling Discount', 'For students with siblings enrolled', 'academic_year', 'percentage',   'tuition_only'),
+  ('STAFF_DEPENDENT',  'Staff Dependent Discount', 'For children of university staff', 'academic_year', 'percentage',   'tuition_and_fees');
+  
+  
+  
+  CREATE TABLE student_discounts (
+  id INT NOT NULL AUTO_INCREMENT,
+  student_id INT NOT NULL,
+  discount_type_id INT NOT NULL,
+  
+  -- For percentage discounts (e.g., 25.00 means 25%)
+  percentage DECIMAL(5,2) DEFAULT NULL,
+  -- For fixed-amount discounts (e.g., 500.00 means $500 off)
+  fixed_amount DECIMAL(10,2) DEFAULT NULL,
+  
+  -- Scope of the award
+  semester_id INT DEFAULT NULL,            -- for semester-scope discounts
+  academic_year VARCHAR(20) DEFAULT NULL,  -- for academic_year-scope discounts (e.g., '2025-2026')
+  
+  -- Audit trail
+  reason TEXT,
+  approved_by INT NOT NULL,                -- user_id of admin/finance officer who approved it
+  status ENUM('active', 'cancelled', 'expired') NOT NULL DEFAULT 'active',
+  
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  PRIMARY KEY (id),
+  KEY idx_student (student_id),
+  KEY idx_semester (semester_id),
+  KEY idx_academic_year (academic_year),
+  
+  CONSTRAINT fk_discount_student   FOREIGN KEY (student_id)       REFERENCES students(user_id),
+  CONSTRAINT fk_discount_type      FOREIGN KEY (discount_type_id) REFERENCES discount_types(id),
+  CONSTRAINT fk_discount_semester  FOREIGN KEY (semester_id)      REFERENCES semesters(id),
+  CONSTRAINT fk_discount_approver  FOREIGN KEY (approved_by)      REFERENCES users(id)
+);
+
+
+INSERT INTO student_discounts 
+  (student_id, discount_type_id, percentage, academic_year, reason, approved_by)
+VALUES 
+  (202311094, 2, 40.00, '2025-2026', 'Annual financial aid based on family income', 202000000);
+  
+  
+ALTER TABLE student_financial_transactions
+  ADD COLUMN discount_amount DECIMAL(10,2) DEFAULT 0.00 AFTER amount,
+  ADD COLUMN original_amount DECIMAL(10,2) DEFAULT NULL AFTER discount_amount;
+
+  
+
