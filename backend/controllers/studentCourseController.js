@@ -466,11 +466,19 @@ const enrollCartItem = async (req, res) => {
 
     // ... (keep all your other validation checks the same) ...
 
-    // 11. Insert enrollment
+    // 11. Insert enrollment with semester_id
     await connection.query(
       `INSERT INTO course_enrollments (student_id, section_id, semester_id, enrolled_at)
        VALUES (?, ?, ?, NOW())`,
       [student_id, section_id, section.semester_id]
+    );
+
+    // 11b. Insert academic record (in_progress) - this is the "transcript" entry
+    await connection.query(
+      `INSERT INTO student_course_completions 
+        (student_id, course_id, section_id, semester_id, status)
+      VALUES (?, ?, ?, ?, 'in_progress')`,
+      [student_id, course_id, section_id, section.semester_id]
     );
 
     // 12. Decrease capacity
@@ -558,7 +566,6 @@ const dropCourse = async (req, res) => {
     });
   }
 
-  // ✅ Get a real connection from the pool
   const connection = await db.promise().getConnection();
 
   try {
@@ -579,13 +586,17 @@ const dropCourse = async (req, res) => {
       });
     }
 
-    // 2. Get section capacity info (fix: select seats AND max_seats, not seats twice)
-    const [currentSection] = await connection.query(
-      `SELECT seats, max_seats FROM course_sections WHERE id = ? FOR UPDATE`,
+    // 2. Get section and semester info (for drop deadline check)
+    const [sectionInfo] = await connection.query(
+      `SELECT cs.seats, cs.max_seats, cs.semester_id,
+              s.enrollment_end_date
+       FROM course_sections cs
+       LEFT JOIN semesters s ON cs.semester_id = s.id
+       WHERE cs.id = ? FOR UPDATE`,
       [section_id]
     );
 
-    if (currentSection.length === 0) {
+    if (sectionInfo.length === 0) {
       await connection.rollback();
       return res.status(404).json({
         success: false,
@@ -593,32 +604,65 @@ const dropCourse = async (req, res) => {
       });
     }
 
-    // 3. Calculate new capacity (cap at max_seats)
-    let newCapacity = currentSection[0].seats + 1;
-    const maxCapacity = currentSection[0].max_seats;
+    const section = sectionInfo[0];
 
-    if (maxCapacity && newCapacity > maxCapacity) {
-      newCapacity = maxCapacity;
+    // 3. Determine if this is a "free drop" or a "late drop"
+    let isLateDrop = false;
+    if (section.enrollment_end_date) {
+      const today = new Date();
+      const dropDeadline = new Date(section.enrollment_end_date);
+      isLateDrop = today > dropDeadline;
     }
 
-    // 4. Remove the enrollment record
+    // 4. Calculate restored capacity
+    let newCapacity = section.seats + 1;
+    if (section.max_seats && newCapacity > section.max_seats) {
+      newCapacity = section.max_seats;
+    }
+
+    // 5. Delete the enrollment
     await connection.query(
       `DELETE FROM course_enrollments 
        WHERE student_id = ? AND section_id = ?`,
       [student_id, section_id]
     );
 
-    // 5. Restore the seat
+    // 6. Restore the seat
     await connection.query(
       `UPDATE course_sections SET seats = ? WHERE id = ?`,
       [newCapacity, section_id]
     );
 
+    // 7. Handle the completion record
+    if (isLateDrop) {
+      // Late drop → mark as withdrawn (stays on transcript)
+      await connection.query(
+        `UPDATE student_course_completions
+         SET status = 'withdrawn',
+             letter_grade = 'W',
+             grade_points = 0,
+             credits_earned = 0,
+             completed_at = CURDATE()
+         WHERE student_id = ? AND section_id = ?`,
+        [student_id, section_id]
+      );
+    } else {
+      // Free drop within window → remove completion entirely (never happened)
+      await connection.query(
+        `DELETE FROM student_course_completions
+         WHERE student_id = ? AND section_id = ?`,
+        [student_id, section_id]
+      );
+    }
+
     await connection.commit();
 
     return res.status(200).json({
       success: true,
-      message: 'Course dropped successfully and seat restored.'
+      message: isLateDrop
+        ? 'Course withdrawn (will appear on transcript with grade W).'
+        : 'Course dropped successfully and seat restored.',
+      late_drop: isLateDrop
     });
 
   } catch (error) {
@@ -630,17 +674,12 @@ const dropCourse = async (req, res) => {
       error: error.message
     });
   } finally {
-    connection.release();  // ✅ always return the connection
+    connection.release();
   }
 };
 
 const swapCourseWithCart = async (req, res) => {
-  const { 
-    student_id, 
-    enrolled_section_id,
-    enrolled_course_id,
-    cart_item_id
-  } = req.body;
+  const { student_id, enrolled_section_id,enrolled_course_id,cart_item_id } = req.body;
 
   if (!student_id || !enrolled_section_id || !enrolled_course_id || !cart_item_id) {
     return res.status(400).json({
@@ -649,7 +688,7 @@ const swapCourseWithCart = async (req, res) => {
     });
   }
 
-  // ✅ Get a real connection from the pool
+  //  Get a real connection from the pool
   const connection = await db.promise().getConnection();
 
   try {
@@ -702,7 +741,7 @@ const swapCourseWithCart = async (req, res) => {
 
     // 4. Check if new section has capacity
     const [newSection] = await connection.query(
-      `SELECT id, seats, course_id 
+      `SELECT id, seats, course_id, semester_id
        FROM course_sections 
        WHERE id = ? FOR UPDATE`,
       [new_section_id]
@@ -828,10 +867,26 @@ const swapCourseWithCart = async (req, res) => {
       [enrolled_section_id]
     );
 
+    // Get drop-deadline info for the OLD section
+    const [oldSectionInfo] = await connection.query(
+      `SELECT s.enrollment_end_date
+      FROM course_sections cs
+      LEFT JOIN semesters s ON cs.semester_id = s.id
+      WHERE cs.id = ?`,
+      [enrolled_section_id]
+    );
+
+    let isLateDrop = false;
+    if (oldSectionInfo[0]?.enrollment_end_date) {
+      const today = new Date();
+      const dropDeadline = new Date(oldSectionInfo[0].enrollment_end_date);
+      isLateDrop = today > dropDeadline;
+    }
+
     // Drop the old enrollment
     await connection.query(
       `DELETE FROM course_enrollments 
-       WHERE student_id = ? AND section_id = ?`,
+      WHERE student_id = ? AND section_id = ?`,
       [student_id, enrolled_section_id]
     );
 
@@ -841,12 +896,42 @@ const swapCourseWithCart = async (req, res) => {
       [enrolled_section_id]
     );
 
-    // Enroll in new section (include semester_id for consistency with enrollCartItem)
+    // Handle the OLD completion record
+    if (isLateDrop) {
+      await connection.query(
+        `UPDATE student_course_completions
+        SET status = 'withdrawn',
+            letter_grade = 'W',
+            grade_points = 0,
+            credits_earned = 0,
+            completed_at = CURDATE()
+        WHERE student_id = ? AND section_id = ?`,
+        [student_id, enrolled_section_id]
+      );
+    } else {
+      await connection.query(
+        `DELETE FROM student_course_completions
+        WHERE student_id = ? AND section_id = ?`,
+        [student_id, enrolled_section_id]
+      );
+    }
+
+    // Get semester_id for the new section
     const newSemesterId = newSection[0].semester_id || null;
+
+    // Enroll in new section
     await connection.query(
       `INSERT INTO course_enrollments (student_id, section_id, semester_id, enrolled_at)
-       VALUES (?, ?, ?, CURDATE())`,
+      VALUES (?, ?, ?, CURDATE())`,
       [student_id, new_section_id, newSemesterId]
+    );
+
+    // Create completion record for the NEW section
+    await connection.query(
+      `INSERT INTO student_course_completions
+        (student_id, course_id, section_id, semester_id, status)
+      VALUES (?, ?, ?, ?, 'in_progress')`,
+      [student_id, new_course_id, new_section_id, newSemesterId]
     );
 
     // Decrease capacity of new section
