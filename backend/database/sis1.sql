@@ -65,11 +65,14 @@ CREATE TABLE `course_enrollments` (
   `student_id` int NOT NULL,
   `section_id` int NOT NULL,
   `enrolled_at` date NOT NULL,
+  `semester_id` int DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_enrollment` (`student_id`,`section_id`),
   KEY `section_id` (`section_id`),
+  KEY `semester_id` (`semester_id`),
   CONSTRAINT `course_enrollments_ibfk_1` FOREIGN KEY (`student_id`) REFERENCES `students` (`user_id`) ON DELETE CASCADE,
-  CONSTRAINT `course_enrollments_ibfk_2` FOREIGN KEY (`section_id`) REFERENCES `course_sections` (`id`) ON DELETE CASCADE
+  CONSTRAINT `course_enrollments_ibfk_2` FOREIGN KEY (`section_id`) REFERENCES `course_sections` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `course_enrollments_ibfk_3` FOREIGN KEY (`semester_id`) REFERENCES `semesters` (`id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=12 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -79,7 +82,6 @@ CREATE TABLE `course_enrollments` (
 
 LOCK TABLES `course_enrollments` WRITE;
 /*!40000 ALTER TABLE `course_enrollments` DISABLE KEYS */;
-INSERT INTO `course_enrollments` VALUES (11,202311094,3,'2026-05-19');
 /*!40000 ALTER TABLE `course_enrollments` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -127,7 +129,7 @@ CREATE TABLE `course_schedule` (
   PRIMARY KEY (`id`),
   KEY `section_id` (`section_id`),
   CONSTRAINT `course_schedule_ibfk_1` FOREIGN KEY (`section_id`) REFERENCES `course_sections` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -136,7 +138,7 @@ CREATE TABLE `course_schedule` (
 
 LOCK TABLES `course_schedule` WRITE;
 /*!40000 ALTER TABLE `course_schedule` DISABLE KEYS */;
-INSERT INTO `course_schedule` VALUES (1,2,'Wednesday','08:30:00','09:45:00','2.4','D'),(2,2,'Wednesday','10:00:00','11:15:00','2.4','D'),(3,3,'Wednesday','11:30:00','12:45:00','1.16','B'),(4,3,'Wednesday','13:00:00','14:15:00','1.16','B');
+INSERT INTO `course_schedule` VALUES (1,2,'Wednesday','08:30:00','09:45:00','2.4','D'),(2,2,'Wednesday','10:00:00','11:15:00','2.4','D'),(3,3,'Wednesday','11:30:00','12:45:00','1.16','B'),(4,3,'Wednesday','13:00:00','14:15:00','1.16','B'),(5,4,'Friday','08:30:00','09:45:00','2.4','B'),(6,4,'Friday','10:00:00','11:15:00','2.4','B');
 /*!40000 ALTER TABLE `course_schedule` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -154,12 +156,15 @@ CREATE TABLE `course_sections` (
   `instructor_id` int DEFAULT NULL,
   `seats` int NOT NULL,
   `max_seats` int DEFAULT NULL,
+  `semester_id` int DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_section` (`course_id`,`section_code`),
   KEY `fk_section_instructor` (`instructor_id`),
+  KEY `semester_id` (`semester_id`),
+  CONSTRAINT `course_sections_ibfk_1` FOREIGN KEY (`semester_id`) REFERENCES `semesters` (`id`),
   CONSTRAINT `fk_section_course` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_section_instructor` FOREIGN KEY (`instructor_id`) REFERENCES `instructors` (`user_id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -168,7 +173,7 @@ CREATE TABLE `course_sections` (
 
 LOCK TABLES `course_sections` WRITE;
 /*!40000 ALTER TABLE `course_sections` DISABLE KEYS */;
-INSERT INTO `course_sections` VALUES (2,'PROG 121-EC01','4775',201412345,30,30),(3,'PROG 121-EC01','4776',NULL,24,25);
+INSERT INTO `course_sections` VALUES (2,'PROG 121-EC01','4775',201412345,30,30,NULL),(3,'PROG 121-EC01','4776',NULL,24,25,NULL),(4,'COMM 120-CM01','1000',NULL,25,25,1);
 /*!40000 ALTER TABLE `course_sections` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -186,6 +191,7 @@ CREATE TABLE `courses` (
   `credits` int NOT NULL,
   `major_id` int NOT NULL,
   `type` enum('major','elective') NOT NULL,
+  `offered_in` enum('Fall','Spring','Both') DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `fk_courses_major` (`major_id`),
   CONSTRAINT `fk_courses_major` FOREIGN KEY (`major_id`) REFERENCES `majors` (`id`) ON DELETE CASCADE
@@ -198,7 +204,7 @@ CREATE TABLE `courses` (
 
 LOCK TABLES `courses` WRITE;
 /*!40000 ALTER TABLE `courses` DISABLE KEYS */;
-INSERT INTO `courses` VALUES ('COMM 120-CM01','Citizenship ','Testttt',3,1,'elective'),('NETW 228-EC00','Computer Networks','Everything related to computer networks',3,1,'major'),('PROG 121-EC01','Programming I','This course involves structural programming using the C/C++ language. This course will allow the student to acquire basic knowledge in structural programming. This course explains variables, basic operators, selection, repititions, arrays, functions and procedures.',3,1,'major'),('PROG 121-EP01','Lab Programming I','This Lab aims to familiarize the student with the programming environment. The student will have exercises to write using a programming language.',1,1,'major');
+INSERT INTO `courses` VALUES ('COMM 120-CM01','Citizenship ','Testttt',3,1,'elective',NULL),('NETW 228-EC00','Computer Networks','Everything related to computer networks',3,1,'major',NULL),('PROG 121-EC01','Programming I','This course involves structural programming using the C/C++ language. This course will allow the student to acquire basic knowledge in structural programming. This course explains variables, basic operators, selection, repititions, arrays, functions and procedures.',3,1,'major',NULL),('PROG 121-EP01','Lab Programming I','This Lab aims to familiarize the student with the programming environment. The student will have exercises to write using a programming language.',1,1,'major',NULL);
 /*!40000 ALTER TABLE `courses` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -442,6 +448,41 @@ INSERT INTO `quiz_sessions` VALUES (1,202311094,'Computer Science',0.00,0,NULL,'
 UNLOCK TABLES;
 
 --
+-- Table structure for table `semesters`
+--
+
+DROP TABLE IF EXISTS `semesters`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `semesters` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(50) NOT NULL,
+  `code` varchar(20) NOT NULL,
+  `academic_year` varchar(20) NOT NULL,
+  `term` enum('Fall','Spring','Summer') NOT NULL,
+  `start_date` date NOT NULL,
+  `end_date` date NOT NULL,
+  `enrollment_start_date` date DEFAULT NULL,
+  `enrollment_end_date` date DEFAULT NULL,
+  `is_active` tinyint(1) DEFAULT '1',
+  `is_current` tinyint(1) DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `code` (`code`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `semesters`
+--
+
+LOCK TABLES `semesters` WRITE;
+/*!40000 ALTER TABLE `semesters` DISABLE KEYS */;
+INSERT INTO `semesters` VALUES (1,'Spring 2026','S2026','2025-2026','Spring','2026-01-29','2026-04-24','2026-01-21','2026-01-28',1,1,'2026-05-19 21:54:39'),(2,'Fall 2026','F2026','2026-2027','Fall','2026-09-14','2026-12-04','2026-09-07','2026-09-13',0,0,'2026-05-19 21:57:27');
+/*!40000 ALTER TABLE `semesters` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `shopping_cart`
 --
 
@@ -461,7 +502,7 @@ CREATE TABLE `shopping_cart` (
   CONSTRAINT `cart_ibfk_1` FOREIGN KEY (`student_id`) REFERENCES `students` (`user_id`) ON DELETE CASCADE,
   CONSTRAINT `cart_ibfk_2` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_section` FOREIGN KEY (`section_id`) REFERENCES `course_sections` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=34 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=35 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -470,7 +511,7 @@ CREATE TABLE `shopping_cart` (
 
 LOCK TABLES `shopping_cart` WRITE;
 /*!40000 ALTER TABLE `shopping_cart` DISABLE KEYS */;
-INSERT INTO `shopping_cart` VALUES (33,202311094,'PROG 121-EC01',2,'2026-05-19 19:15:28');
+INSERT INTO `shopping_cart` VALUES (33,202311094,'PROG 121-EC01',2,'2026-05-19 19:15:28'),(34,202311094,'COMM 120-CM01',4,'2026-05-19 22:19:18');
 /*!40000 ALTER TABLE `shopping_cart` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -608,6 +649,10 @@ LOCK TABLES `users` WRITE;
 INSERT INTO `users` VALUES (201412345,'Ali Ibrahim','$2b$10$dsm7ztdFg5mCccYtGeKap.Mtx7zOnNWFCo6BOcyc33vZPHzLk6N16','instructor','1991-04-29','aliibrahim@ua.edu.lb','71123456','active'),(202000000,'Admin Zein','$2b$10$C3erntex7U.qwzQnURh5IOFJJdnbIIcM/aCd5gWPvy4xA8GJi.zBC','admin','1990-04-22',NULL,NULL,'active'),(202000001,'Finance Ali','$2b$10$6vcRnjaHwe35Blda8J4K8ON..j34tkcZ4dhv5HOLGebJ18PH/6YcK','finance_officer','2000-01-29','aliFinance@ua.edu.lb','03000001','active'),(202311094,'Zein Al Abidin Sawly','$2b$10$p3xCYHSO/h13NQHahZb3PuQ3nhLseXksLfkjtCEG38R8XrapJulpO','student','2005-07-27','zeinsawly@ua.edu.lb','70629507','active');
 /*!40000 ALTER TABLE `users` ENABLE KEYS */;
 UNLOCK TABLES;
+
+--
+-- Dumping routines for database 'sis'
+--
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
@@ -618,4 +663,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-05-19 22:26:24
+-- Dump completed on 2026-05-20 17:14:51

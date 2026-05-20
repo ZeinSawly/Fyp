@@ -39,6 +39,8 @@ export default function CourseManagement() {
   const [selectedCourseForSection, setSelectedCourseForSection] = useState(null);
   const [addingSection, setAddingSection] = useState(false);
   const [sectionsLoading, setSectionsLoading] = useState(false);
+  const [semesters, setSemesters] = useState([]);
+  const [semestersLoading, setSemestersLoading] = useState(false);
 
   // Schedule state
   const [scheduleForm] = Form.useForm();
@@ -57,6 +59,7 @@ export default function CourseManagement() {
     fetchCourses();
     fetchInstructors();
     fetchMajors();
+    fetchSemesters(); 
   }, []);
 
   const fetchCourses = async () => {
@@ -136,6 +139,20 @@ export default function CourseManagement() {
     }
   };
 
+  const fetchSemesters = async () => {
+      setSemestersLoading(true);
+      try {
+          const res = await api.get('/api/admin/semesters');
+          if (res.data.success) {
+              setSemesters(res.data.data);
+          }
+      } catch (err) {
+          console.error('Failed to load semesters');
+      } finally {
+          setSemestersLoading(false);
+      }
+  };
+
   const filterCoursesByMajor = (majorId) => {
     if (!majorId) {
       setFilteredCourses(courses);
@@ -170,13 +187,15 @@ export default function CourseManagement() {
 
   const handleAddSection = async (values) => {
     setAddingSection(true);
-    setError(''); setSuccess('');
+    setError(''); 
+    setSuccess('');
     try {
       await api.post('/api/admin/courses/sections/add', {
         course_id: selectedCourseForSection,
         instructor_id: values.instructor_id || null,
         section_code: values.section_code,
         max_seats: values.max_seats, // ← changed from capacity
+        semester_id: values.semester_id,
       });
       setSuccess(`Section "${values.section_code}" added successfully.`);
       sectionForm.resetFields();
@@ -234,6 +253,7 @@ export default function CourseManagement() {
 
   const sectionColumns = [
     { title: 'Section Code', dataIndex: 'section_code', key: 'section_code', render: v => <Tag color="blue">{v}</Tag> },
+    { title: 'Semester', dataIndex: 'semester_name', key: 'semester_name',render: (_, record) => record.semester_name || '—'},
     { title: 'Instructor', dataIndex: 'instructor_name', key: 'instructor_name', render: v => v || 'TBA' },
     { title: 'Department', dataIndex: 'department', key: 'department', render: v => v || '—' },
     {
@@ -446,6 +466,28 @@ export default function CourseManagement() {
                       <Option key={c.id} value={c.id}>{c.name} ({c.id})</Option>
                     ))}
                   </Select>
+                </Form.Item>
+
+                {/* Semester Selection - Add this field */}
+                <Form.Item
+                    label={<Text style={{ fontWeight: 600, color: '#374151' }}>Semester</Text>}
+                    name="semester_id"
+                    rules={[{ required: true, message: 'Please select a semester' }]}
+                >
+                    <Select
+                        size="large"
+                        placeholder="Select semester"
+                        style={{ borderRadius: 10 }}
+                        loading={semestersLoading}
+                        showSearch
+                        optionFilterProp="children"
+                    >
+                        {semesters.map(s => (
+                            <Option key={s.id} value={s.id}>
+                                {s.name} {s.is_current && <Tag color="green" size="small">Current</Tag>}
+                            </Option>
+                        ))}
+                    </Select>
                 </Form.Item>
 
                 <Row gutter={12}>

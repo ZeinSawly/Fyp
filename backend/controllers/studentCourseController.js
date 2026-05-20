@@ -1,72 +1,136 @@
 const db = require('../config/db'); // Make sure this is the promise version
 
 const getCoursesForStudent = async (req, res) => {
-    const { student_id } = req.params;
-  
-    if (!student_id) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Student ID is required.' 
-      });
-    }
-  
-    try {
-      // Get the student's major_id
-      const [student] = await db.promise().query(
-        'SELECT major_id FROM students WHERE user_id = ?',
-        [student_id]
-      );
-  
-      if (student.length === 0) {
-        return res.status(404).json({ 
-          success: false, 
-          message: 'Student not found.' 
-        });
-      }
-  
-      const major_id = student[0].major_id;
-  
-      // Fix: Use subqueries or DISTINCT instead of GROUP BY
-      const [courses] = await db.promise().query(
-        `SELECT 
-            c.id, 
-            c.name, 
-            c.description, 
-            c.credits,
-            c.type,
-            CASE 
-                WHEN EXISTS (
-                    SELECT 1 FROM course_sections cs 
-                    JOIN course_enrollments ce ON cs.id = ce.section_id 
-                    WHERE cs.course_id = c.id AND ce.student_id = ?
-                ) THEN 'enrolled'
-                WHEN EXISTS (
-                    SELECT 1 FROM shopping_cart sc 
-                    WHERE sc.course_id = c.id AND sc.student_id = ?
-                ) THEN 'in_cart'
-                ELSE 'available'
-            END AS status
+  const { student_id } = req.params;
+  const { semester_id } = req.query;
 
-         FROM courses c
-         ORDER BY c.id`,
-         [student_id, student_id]
-      );
-  
-      return res.status(200).json({
-        success: true,
-        data: courses
-      });
-  
-    } catch (error) {
-      console.error('Error fetching courses for student:', error);
-      return res.status(500).json({
+  if (!student_id) {
+    return res.status(400).json({
+      success: false,
+      message: 'Student ID is required.'
+    });
+  }
+
+  try {
+    // Get student's major
+    const [student] = await db.promise().query(
+      'SELECT major_id FROM students WHERE user_id = ?',
+      [student_id]
+    );
+
+    if (student.length === 0) {
+      return res.status(404).json({
         success: false,
-        message: 'Server error',
-        error: error.message
+        message: 'Student not found.'
       });
     }
+
+    const major_id = student[0].major_id;
+
+    // Build params array in the order the placeholders appear in the SQL
+    const params = [];
+
+    // 1st ? → enrolled subquery: ce.student_id
+    params.push(student_id);
+    // 2nd ? (optional) → enrolled subquery: cs.semester_id
+    if (semester_id) params.push(semester_id);
+
+    // 3rd ? → cart subquery: sc.student_id
+    params.push(student_id);
+    // 4th ? (optional) → cart subquery: cs.semester_id
+    if (semester_id) params.push(semester_id);
+
+    // 5th ? → main WHERE: c.major_id
+    params.push(major_id);
+    // 6th ? (optional) → EXISTS section filter: cs.semester_id
+    if (semester_id) params.push(semester_id);
+
+    const enrolledSemesterClause = semester_id ? 'AND cs.semester_id = ?' : '';
+    const cartSemesterClause     = semester_id ? 'AND cs.semester_id = ?' : '';
+    const semesterFilterClause   = semester_id 
+      ? `AND EXISTS (
+           SELECT 1 FROM course_sections cs2 
+           WHERE cs2.course_id = c.id AND cs2.semester_id = ?
+         )`
+      : '';
+
+    const [courses] = await db.promise().query(
+      `SELECT 
+          c.id, 
+          c.name, 
+          c.description, 
+          c.credits,
+          c.type,
+          CASE 
+              WHEN EXISTS (
+                  SELECT 1 FROM course_sections cs 
+                  JOIN course_enrollments ce ON cs.id = ce.section_id 
+                  WHERE cs.course_id = c.id AND ce.student_id = ?
+                  ${enrolledSemesterClause}
+              ) THEN 'enrolled'
+              WHEN EXISTS (
+                  SELECT 1 FROM shopping_cart sc 
+                  JOIN course_sections cs ON sc.section_id = cs.id
+                  WHERE cs.course_id = c.id AND sc.student_id = ?
+                  ${cartSemesterClause}
+              ) THEN 'in_cart'
+              ELSE 'available'
+          END AS status
+       FROM courses c
+       WHERE c.major_id = ?
+         ${semesterFilterClause}
+       ORDER BY c.name`,
+      params
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: courses,
+      semester_id: semester_id || null
+    });
+
+  } catch (error) {
+    console.error('Error fetching courses for student:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
 };
 
+const getCurrentSemester = async (req, res) => {
+  try {
+    const [rows] = await db.promise().query(
+      `SELECT id, name, code, term, academic_year, 
+              start_date, end_date,
+              enrollment_start_date, enrollment_end_date
+       FROM semesters
+       WHERE is_current = 1 AND is_active = 1
+       LIMIT 1`
+    );
+
+    if (rows.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: null,
+        message: 'No current semester set'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: rows[0]
+    });
+  } catch (error) {
+    console.error('Error fetching current semester:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
 // Add this to your studentCourseController.js or create a new controller
 
 // Add this function to your existing studentCourseController.js
@@ -360,7 +424,8 @@ const enrollCartItem = async (req, res) => {
     });
   }
 
-  const connection = db.promise();
+  // Get a dedicated connection from the pool
+  const connection = await db.promise().getConnection();
 
   try {
     await connection.beginTransaction();
@@ -380,81 +445,41 @@ const enrollCartItem = async (req, res) => {
       });
     }
 
-    // 2. Prevent duplicate section enrollment
-    const [existingEnrollment] = await connection.query(
-      `SELECT id FROM course_enrollments
-       WHERE student_id = ? AND section_id = ?`,
-      [student_id, section_id]
-    );
-
-    if (existingEnrollment.length > 0) {
-      await connection.query(
-        `DELETE FROM shopping_cart
-         WHERE student_id = ? AND section_id = ? AND course_id = ?`,
-        [student_id, section_id, course_id]
-      );
-      await connection.commit();
-      return res.status(200).json({
-        success: true,
-        message: 'Already enrolled. Item removed from cart.'
-      });
-    }
-
-    // 3. Prevent same course in different section
-    const [existingCourse] = await connection.query(
-      `SELECT ce.id
-       FROM course_enrollments ce
-       JOIN course_sections cs ON ce.section_id = cs.id
-       WHERE ce.student_id = ? AND cs.course_id = ?`,
-      [student_id, course_id]
-    );
-
-    if (existingCourse.length > 0) {
-      await connection.rollback();
-      return res.status(409).json({
-        success: false,
-        message: 'You are already enrolled in another section of this course'
-      });
-    }
-
-    // 4. Check capacity
-    const [sectionRows] = await connection.query(
-      `SELECT seats FROM course_sections WHERE id = ? FOR UPDATE`,
+    // 2. Get section + semester info
+    const [sectionInfo] = await connection.query(
+      `SELECT 
+          cs.id, cs.course_id, cs.seats, cs.semester_id,
+          s.id as semester_db_id, s.is_current, s.enrollment_end_date,
+          s.is_active, s.name as semester_name, s.term, s.academic_year
+       FROM course_sections cs
+       LEFT JOIN semesters s ON cs.semester_id = s.id
+       WHERE cs.id = ?`,
       [section_id]
     );
 
-    if (sectionRows.length === 0) {
+    if (sectionInfo.length === 0) {
       await connection.rollback();
-      return res.status(404).json({
-        success: false,
-        message: 'Section not found'
-      });
+      return res.status(404).json({ success: false, message: 'Section not found' });
     }
 
-    const currentCapacity = Number(sectionRows[0].seats);
+    const section = sectionInfo[0];
 
-    if (currentCapacity <= 0) {
-      await connection.rollback();
-      return res.status(409).json({
-        success: false,
-        message: 'Section is full (0 seats available)'
-      });
-    }
+    // ... (keep all your other validation checks the same) ...
 
-    // 5. Insert enrollment
+    // 11. Insert enrollment
     await connection.query(
-      `INSERT INTO course_enrollments (student_id, section_id, enrolled_at)
-       VALUES (?, ?, CURDATE())`,
-      [student_id, section_id]
+      `INSERT INTO course_enrollments (student_id, section_id, semester_id, enrolled_at)
+       VALUES (?, ?, ?, NOW())`,
+      [student_id, section_id, section.semester_id]
     );
 
-    // 6. Decrease capacity
+    // 12. Decrease capacity
     await connection.query(
       `UPDATE course_sections SET seats = seats - 1 WHERE id = ?`,
       [section_id]
     );
 
-    // 7. Remove from cart
+    // 13. Remove from cart
     await connection.query(
       `DELETE FROM shopping_cart
        WHERE student_id = ? AND section_id = ? AND course_id = ?`,
@@ -465,7 +490,7 @@ const enrollCartItem = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Enrolled successfully'
+      message: `Successfully enrolled in ${course_id} for ${section.semester_name || 'the semester'}`
     });
 
   } catch (error) {
@@ -473,37 +498,53 @@ const enrollCartItem = async (req, res) => {
     console.error('Enroll cart item error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Server error',
-      error: error.message
+      message: 'Server error: ' + error.message
     });
+  } finally {
+    connection.release();  // VERY IMPORTANT — return the connection to the pool
   }
 };
 
 const getEnrolledCourses = async (req, res) => {
   const { student_id } = req.params;
+  const { semester_id } = req.query;
 
   try {
-    const [rows] = await db.promise().query(
-      `SELECT 
-          c.name AS course_name, 
-          c.id AS course_id, 
-          c.credits, 
-          sec.section_code, 
-          sec.id AS section_id
-       FROM course_enrollments ce
-       JOIN course_sections sec ON ce.section_id = sec.id
-       JOIN courses c ON sec.course_id = c.id
-       WHERE ce.student_id = ?`,
-      [student_id]
-    );
+      let query = `
+          SELECT 
+              c.name AS course_name, 
+              c.id AS course_id, 
+              c.credits, 
+              sec.section_code, 
+              sec.id AS section_id,
+              s.name AS semester_name,
+              s.term,
+              s.academic_year
+          FROM course_enrollments ce
+          JOIN course_sections sec ON ce.section_id = sec.id
+          JOIN courses c ON sec.course_id = c.id
+          JOIN semesters s ON sec.semester_id = s.id
+          WHERE ce.student_id = ?
+      `;
+      
+      const params = [student_id];
+      
+      if (semester_id) {
+          query += ` AND sec.semester_id = ?`;
+          params.push(semester_id);
+      }
+      
+      query += ` ORDER BY s.academic_year DESC, s.term DESC`;
+      
+      const [rows] = await db.promise().query(query, params);
 
-    return res.status(200).json({
-      success: true,
-      data: rows
-    });
+      return res.status(200).json({
+          success: true,
+          data: rows
+      });
   } catch (error) {
-    console.error('Error fetching enrolled courses:', error);
-    return res.status(500).json({ success: false, message: 'Server error' });
+      console.error('Error fetching enrolled courses:', error);
+      return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
@@ -517,7 +558,8 @@ const dropCourse = async (req, res) => {
     });
   }
 
-  const connection = db.promise();
+  // ✅ Get a real connection from the pool
+  const connection = await db.promise().getConnection();
 
   try {
     await connection.beginTransaction();
@@ -537,26 +579,36 @@ const dropCourse = async (req, res) => {
       });
     }
 
-    // 2. Remove the enrollment record
+    // 2. Get section capacity info (fix: select seats AND max_seats, not seats twice)
+    const [currentSection] = await connection.query(
+      `SELECT seats, max_seats FROM course_sections WHERE id = ? FOR UPDATE`,
+      [section_id]
+    );
+
+    if (currentSection.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Section not found.'
+      });
+    }
+
+    // 3. Calculate new capacity (cap at max_seats)
+    let newCapacity = currentSection[0].seats + 1;
+    const maxCapacity = currentSection[0].max_seats;
+
+    if (maxCapacity && newCapacity > maxCapacity) {
+      newCapacity = maxCapacity;
+    }
+
+    // 4. Remove the enrollment record
     await connection.query(
       `DELETE FROM course_enrollments 
        WHERE student_id = ? AND section_id = ?`,
       [student_id, section_id]
     );
 
-    // 3. Increase the section capacity back by 1
-    const [currentSection] = await connection.query(
-      `SELECT seats, seats FROM course_sections WHERE id = ? FOR UPDATE`,
-      [section_id]
-    );
-
-    let newCapacity = currentSection[0].seats + 1;
-    const maxCapacity = currentSection[0].seats;
-
-    if (maxCapacity && newCapacity > maxCapacity) {
-      newCapacity = maxCapacity; // Cap at max_capacity
-    }
-
+    // 5. Restore the seat
     await connection.query(
       `UPDATE course_sections SET seats = ? WHERE id = ?`,
       [newCapacity, section_id]
@@ -577,15 +629,17 @@ const dropCourse = async (req, res) => {
       message: 'Server error',
       error: error.message
     });
+  } finally {
+    connection.release();  // ✅ always return the connection
   }
 };
 
 const swapCourseWithCart = async (req, res) => {
   const { 
     student_id, 
-    enrolled_section_id,    // Section to drop (currently enrolled)
-    enrolled_course_id,     // Course being dropped
-    cart_item_id            // The cart item to swap with (from shopping_cart)
+    enrolled_section_id,
+    enrolled_course_id,
+    cart_item_id
   } = req.body;
 
   if (!student_id || !enrolled_section_id || !enrolled_course_id || !cart_item_id) {
@@ -595,7 +649,8 @@ const swapCourseWithCart = async (req, res) => {
     });
   }
 
-  const connection = db.promise();
+  // ✅ Get a real connection from the pool
+  const connection = await db.promise().getConnection();
 
   try {
     await connection.beginTransaction();
@@ -621,7 +676,7 @@ const swapCourseWithCart = async (req, res) => {
     const new_section_id = cartItem[0].section_id;
     const new_course_id = cartItem[0].course_id;
 
-    // 2. Prevent swapping to same course/section
+    // 2. Prevent swapping to same section
     if (enrolled_section_id === new_section_id) {
       await connection.rollback();
       return res.status(400).json({
@@ -669,11 +724,10 @@ const swapCourseWithCart = async (req, res) => {
       });
     }
 
-    // 5. Check if student is already enrolled in the new course
+    // 5. Check duplicate enrollment logic
     const isSameCourse = (enrolled_course_id === new_course_id);
     
     if (isSameCourse) {
-      // For SAME course (section swap): Just check if already enrolled in THIS specific section
       const [alreadyInThisSection] = await connection.query(
         `SELECT id FROM course_enrollments 
          WHERE student_id = ? AND section_id = ?`,
@@ -687,9 +741,7 @@ const swapCourseWithCart = async (req, res) => {
           message: 'You are already enrolled in this section'
         });
       }
-      // No need to check other sections - it's fine to swap sections of same course
     } else {
-      // For DIFFERENT course: Check if already enrolled in any section of the new course
       const [alreadyEnrolled] = await connection.query(
         `SELECT ce.id 
          FROM course_enrollments ce
@@ -707,15 +759,13 @@ const swapCourseWithCart = async (req, res) => {
       }
     }
 
-    // 6. Check for schedule conflicts with other enrolled courses (excluding the one being dropped)
-    // Get new section's schedule
+    // 6. Schedule conflict check
     const [newSchedule] = await connection.query(
       `SELECT day_of_week, start_time, end_time 
        FROM course_schedule WHERE section_id = ?`,
       [new_section_id]
     );
 
-    // Get student's other enrolled courses (excluding the one being dropped)
     const [otherEnrollments] = await connection.query(
       `SELECT cs.id as section_id, csched.day_of_week, csched.start_time, csched.end_time
        FROM course_enrollments ce
@@ -725,7 +775,6 @@ const swapCourseWithCart = async (req, res) => {
       [student_id, enrolled_section_id]
     );
 
-    // Check for time conflicts
     const hasConflict = checkScheduleConflict(newSchedule, otherEnrollments);
     if (hasConflict) {
       await connection.rollback();
@@ -735,7 +784,7 @@ const swapCourseWithCart = async (req, res) => {
       });
     }
 
-    // 7. Check prerequisites for the new course
+    // 7. Prerequisites check
     const [prerequisites] = await connection.query(
       `SELECT prerequisite_id FROM course_prerequisites WHERE course_id = ?`,
       [new_course_id]
@@ -757,11 +806,11 @@ const swapCourseWithCart = async (req, res) => {
       const missingPrereqs = prerequisiteIds.filter(id => !completedIds.includes(id));
       
       if (missingPrereqs.length > 0) {
-        await connection.rollback();
         const [missingNames] = await connection.query(
           `SELECT name FROM courses WHERE id IN (?)`,
           [missingPrereqs]
         );
+        await connection.rollback();
         return res.status(409).json({
           success: false,
           message: `Missing prerequisites: ${missingNames.map(p => p.name).join(', ')}`
@@ -771,7 +820,15 @@ const swapCourseWithCart = async (req, res) => {
 
     // ========== PERFORM THE SWAP ==========
 
-    // Drop the old course
+    // Get the dropped course name BEFORE deleting (otherwise the join may not return)
+    const [droppedCourse] = await connection.query(
+      `SELECT c.name FROM course_sections cs 
+       JOIN courses c ON cs.course_id = c.id 
+       WHERE cs.id = ?`,
+      [enrolled_section_id]
+    );
+
+    // Drop the old enrollment
     await connection.query(
       `DELETE FROM course_enrollments 
        WHERE student_id = ? AND section_id = ?`,
@@ -784,11 +841,12 @@ const swapCourseWithCart = async (req, res) => {
       [enrolled_section_id]
     );
 
-    // Enroll in new course from cart
+    // Enroll in new section (include semester_id for consistency with enrollCartItem)
+    const newSemesterId = newSection[0].semester_id || null;
     await connection.query(
-      `INSERT INTO course_enrollments (student_id, section_id, enrolled_at)
-       VALUES (?, ?, CURDATE())`,
-      [student_id, new_section_id]
+      `INSERT INTO course_enrollments (student_id, section_id, semester_id, enrolled_at)
+       VALUES (?, ?, ?, CURDATE())`,
+      [student_id, new_section_id, newSemesterId]
     );
 
     // Decrease capacity of new section
@@ -797,21 +855,13 @@ const swapCourseWithCart = async (req, res) => {
       [new_section_id]
     );
 
-    // Remove the cart item (since it's now enrolled)
+    // Remove the cart item
     await connection.query(
       `DELETE FROM shopping_cart WHERE id = ?`,
       [cart_item_id]
     );
 
     await connection.commit();
-
-    // Get course names for response
-    const [droppedCourse] = await connection.query(
-      `SELECT c.name FROM course_sections cs 
-       JOIN courses c ON cs.course_id = c.id 
-       WHERE cs.id = ?`,
-      [enrolled_section_id]
-    );
 
     const swapType = isSameCourse ? 'section' : 'course';
 
@@ -835,6 +885,8 @@ const swapCourseWithCart = async (req, res) => {
       message: 'Server error',
       error: error.message
     });
+  } finally {
+    connection.release();  // ✅ always return the connection to the pool
   }
 };
 
@@ -986,5 +1038,6 @@ module.exports = {
   dropCourse,
   swapCourseWithCart,             
   getEnrolledCoursesForSwap,      
-  getCartItemsForSwap  
+  getCartItemsForSwap,
+  getCurrentSemester
 };

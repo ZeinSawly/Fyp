@@ -1,44 +1,71 @@
 import React, { useState, useEffect } from 'react';
-import {View, Text, StyleSheet, TouchableOpacity, FlatList, SafeAreaView, ActivityIndicator, Alert} from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, SafeAreaView, ActivityIndicator, Alert, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
-
 
 export default function StudentCourses({ route, navigation }) {
   const { student } = route.params;
 
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [courseType, setCourseType] = useState('major'); 
+  const [courseType, setCourseType] = useState('major');
 
+  // Semester filter state
+  const [currentSemester, setCurrentSemester] = useState(null);
+  const [selectedSemesterId, setSelectedSemesterId] = useState(null); // null = "All"
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  // Fetch current semester once on mount
+  useEffect(() => {
+    api.get('/api/students/current-semester')
+      .then((res) => {
+        if (res.data.success && res.data.data) {
+          setCurrentSemester(res.data.data);
+        }
+      })
+      .catch((err) => console.error('Failed to load current semester', err));
+  }, []);
+
+  // Fetch courses whenever the semester filter changes
   useEffect(() => {
     fetchCourses();
-  }, []);
+  }, [selectedSemesterId]);
 
   const fetchCourses = () => {
     setLoading(true);
 
-    api.get(`/api/students/${student.id}/courses`)
-  .then((res) => {
-    if (res.data.success) {
-      setCourses(res.data.data);
-    } else {
-      Alert.alert('Error', res.data.message);
-    }
-  })
-  .catch((err) => {
-    console.error(err);
-    Alert.alert('Error', 'Failed to fetch courses');
-  })
-  .finally(() => setLoading(false));
-};
+    const url = selectedSemesterId
+      ? `/api/students/${student.id}/courses?semester_id=${selectedSemesterId}`
+      : `/api/students/${student.id}/courses`;
 
-  // 🔥 FILTER LOGIC
+    api.get(url)
+      .then((res) => {
+        if (res.data.success) {
+          setCourses(res.data.data);
+        } else {
+          Alert.alert('Error', res.data.message);
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+        Alert.alert('Error', 'Failed to fetch courses');
+      })
+      .finally(() => setLoading(false));
+  };
+
   const filteredCourses = courses.filter(course => course.type === courseType);
 
   const handleCoursePress = (course) => {
     navigation.navigate('CourseDetails', { course, student });
   };
+
+  // Build dropdown options
+  const semesterOptions = [
+    { id: null, label: 'All Courses' },
+    ...(currentSemester ? [{ id: currentSemester.id, label: currentSemester.name }] : [])
+  ];
+
+  const activeOption = semesterOptions.find(opt => opt.id === selectedSemesterId) || semesterOptions[0];
 
   const renderCourse = ({ item }) => (
     <TouchableOpacity
@@ -55,8 +82,10 @@ export default function StudentCourses({ route, navigation }) {
             </Text>
           </View>
 
-          {item.status === 'completed' ? (
+          {item.status === 'enrolled' ? (
             <Ionicons name="checkmark-circle" size={24} color="#10B981" />
+          ) : item.status === 'in_cart' ? (
+            <Ionicons name="cart" size={22} color="#2b6cb0" />
           ) : (
             <Ionicons name="chevron-forward" size={20} color="#94A3B8" />
           )}
@@ -67,7 +96,7 @@ export default function StudentCourses({ route, navigation }) {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      
+
       {/* HEADER */}
       <View style={styles.navHeader}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -84,10 +113,20 @@ export default function StudentCourses({ route, navigation }) {
 
       <View style={styles.container}>
 
-        {/* TITLE */}
-        <Text style={styles.sectionTitle}>Courses</Text>
+        {/* TITLE + SEMESTER DROPDOWN */}
+        <View style={styles.titleRow}>
+          <Text style={styles.sectionTitle}>Courses</Text>
 
-        {/* 🔥 TYPE TABS */}
+          <TouchableOpacity
+            style={styles.dropdownTrigger}
+            onPress={() => setDropdownOpen(true)}
+          >
+            <Text style={styles.dropdownTriggerText}>{activeOption.label}</Text>
+            <Ionicons name="chevron-down" size={16} color="#1E293B" />
+          </TouchableOpacity>
+        </View>
+
+        {/* TYPE TABS */}
         <View style={styles.typeTabsContainer}>
           {['major', 'elective'].map(type => (
             <TouchableOpacity
@@ -111,6 +150,8 @@ export default function StudentCourses({ route, navigation }) {
         {/* CONTENT */}
         {loading ? (
           <ActivityIndicator size="large" color="#2b6cb0" />
+        ) : filteredCourses.length === 0 ? (
+          <Text style={styles.emptyText}>No courses available for this filter.</Text>
         ) : (
           <FlatList
             data={filteredCourses}
@@ -120,6 +161,43 @@ export default function StudentCourses({ route, navigation }) {
         )}
 
       </View>
+
+      {/* SEMESTER DROPDOWN MODAL */}
+      <Modal
+        transparent
+        visible={dropdownOpen}
+        animationType="fade"
+        onRequestClose={() => setDropdownOpen(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setDropdownOpen(false)}
+        >
+          <View style={styles.dropdownMenu}>
+            {semesterOptions.map((opt) => (
+              <TouchableOpacity
+                key={String(opt.id)}
+                style={styles.dropdownItem}
+                onPress={() => {
+                  setSelectedSemesterId(opt.id);
+                  setDropdownOpen(false);
+                }}
+              >
+                <Text style={[
+                  styles.dropdownItemText,
+                  opt.id === selectedSemesterId && styles.dropdownItemTextActive
+                ]}>
+                  {opt.label}
+                </Text>
+                {opt.id === selectedSemesterId && (
+                  <Ionicons name="checkmark" size={18} color="#2b6cb0" />
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -135,28 +213,38 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0'
   },
 
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '800'
-  },
+  headerTitle: { fontSize: 18, fontWeight: '800' },
+  subHeader: { fontSize: 12, color: '#64748B' },
 
-  subHeader: {
-    fontSize: 12,
-    color: '#64748B'
-  },
+  container: { flex: 1, padding: 20 },
 
-  container: {
-    flex: 1,
-    padding: 20
-  },
-
-  sectionTitle: {
-    fontSize: 22,
-    fontWeight: '800',
+  titleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 10
   },
 
-  /* 🔥 NEW TABS */
+  sectionTitle: { fontSize: 22, fontWeight: '800' },
+
+  dropdownTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 6
+  },
+
+  dropdownTriggerText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B'
+  },
+
   typeTabsContainer: {
     flexDirection: 'row',
     backgroundColor: '#FFF',
@@ -165,45 +253,51 @@ const styles = StyleSheet.create({
     marginBottom: 16
   },
 
-  typeTabBtn: {
-    flex: 1,
-    padding: 10,
-    alignItems: 'center',
-    borderRadius: 10
-  },
+  typeTabBtn: { flex: 1, padding: 10, alignItems: 'center', borderRadius: 10 },
+  activeTypeTab: { backgroundColor: '#2b6cb0' },
+  typeTabText: { color: '#64748B', fontWeight: '700' },
+  activeTypeTabText: { color: '#FFF' },
 
-  activeTypeTab: {
-    backgroundColor: '#2b6cb0'
-  },
+  courseCard: { backgroundColor: '#FFF', padding: 16, borderRadius: 16, marginBottom: 12 },
+  courseHeader: { flexDirection: 'row', justifyContent: 'space-between' },
+  courseTitle: { fontSize: 16, fontWeight: '800' },
+  courseDetails: { fontSize: 12, color: '#64748B' },
 
-  typeTabText: {
+  emptyText: {
+    textAlign: 'center',
     color: '#64748B',
-    fontWeight: '700'
+    marginTop: 24,
+    fontSize: 14
   },
 
-  activeTypeTabText: {
-    color: '#FFF'
+  // Dropdown modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center'
   },
 
-  courseCard: {
+  dropdownMenu: {
+    width: 240,
     backgroundColor: '#FFF',
-    padding: 16,
-    borderRadius: 16,
-    marginBottom: 12
+    borderRadius: 12,
+    paddingVertical: 8,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 }
   },
 
-  courseHeader: {
+  dropdownItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between'
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16
   },
 
-  courseTitle: {
-    fontSize: 16,
-    fontWeight: '800'
-  },
-
-  courseDetails: {
-    fontSize: 12,
-    color: '#64748B'
-  }
+  dropdownItemText: { fontSize: 14, color: '#1E293B' },
+  dropdownItemTextActive: { color: '#2b6cb0', fontWeight: '700' }
 });
