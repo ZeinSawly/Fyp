@@ -4,7 +4,7 @@ import {
   DollarOutlined, CheckCircleOutlined, ClockCircleOutlined,
   UserOutlined, IdcardOutlined, GlobalOutlined,
   CalendarOutlined, BankOutlined, FileTextOutlined,
-  SearchOutlined,
+  SearchOutlined, WarningOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import FinanceLayout from '../../Components/FinanceLayout';
@@ -20,6 +20,10 @@ export default function FinanceDashboard() {
     totalPaid: null,
     totalPending: null,
     totalTransactions: null,
+    totalOverdue: null,
+    overdueCount: null,
+    totalActiveStudents: null,
+    currentSemesterStats: null,
   });
   const [recentTransactions, setRecentTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -43,6 +47,10 @@ export default function FinanceDashboard() {
           totalPaid: res.data.data.totalPaid,
           totalPending: res.data.data.totalPending,
           totalTransactions: res.data.data.totalTransactions,
+          totalOverdue: res.data.data.totalOverdue,
+          overdueCount: res.data.data.overdueCount,
+          totalActiveStudents: res.data.data.totalActiveStudents,
+          currentSemesterStats: res.data.data.currentSemesterStats,
         });
         setRecentTransactions(res.data.data.recentTransactions || []);
       }
@@ -93,32 +101,48 @@ export default function FinanceDashboard() {
 
   const statCards = [
     {
-      title: 'Total Collected',
-      value: stats.totalPaid !== null ? `$${Number(stats.totalPaid).toLocaleString()}` : null,
-      icon: <CheckCircleOutlined />,
-      color: '#2f855a', bg: '#F0FFF4',
-      desc: 'Payments received',
-    },
-    {
-      title: 'Pending Payments',
-      value: stats.totalPending !== null ? `$${Number(stats.totalPending).toLocaleString()}` : null,
+      title: 'Outstanding (This Semester)',
+      value: stats.currentSemesterStats !== null
+        ? `$${Number(stats.currentSemesterStats?.outstanding || 0).toLocaleString()}`
+        : null,
       icon: <ClockCircleOutlined />,
-      color: '#c53030', bg: '#FFF5F5',
-      desc: 'Outstanding amount',
+      color: '#c53030',
+      bg: '#FFF5F5',
+      desc: stats.currentSemesterStats?.semester_name || 'Current term',
     },
     {
-      title: 'Total Transactions',
-      value: stats.totalTransactions,
-      icon: <FileTextOutlined />,
-      color: '#2b6cb0', bg: '#EFF6FF',
-      desc: 'All time records',
+      title: 'Collected (This Semester)',
+      value: stats.currentSemesterStats !== null
+        ? `$${Number(stats.currentSemesterStats?.collected || 0).toLocaleString()}`
+        : null,
+      icon: <CheckCircleOutlined />,
+      color: '#2f855a',
+      bg: '#F0FFF4',
+      desc: stats.currentSemesterStats?.semester_name || 'Current term',
     },
     {
-      title: 'Current Semester',
-      value: getSemesterDisplay(),
-      icon: <CalendarOutlined />,
-      color: '#d97706', bg: '#FFFBEB',
-      desc: semesterLoading ? 'Loading...' : (currentSemester?.is_current ? 'Active semester' : 'Latest semester'),
+      title: 'Overdue',
+      value: stats.totalOverdue !== null
+        ? `$${Number(stats.totalOverdue).toLocaleString()}`
+        : null,
+      icon: <WarningOutlined />,
+      color: '#dd6b20',
+      bg: '#FFFAF0',
+      desc: stats.overdueCount !== null 
+        ? `${stats.overdueCount} payment${stats.overdueCount === 1 ? '' : 's'} overdue`
+        : '—',
+      clickable: true,
+      onClick: () => navigate('/finance/payment-report?filter=overdue'),
+    },
+    {
+      title: 'Active Students',
+      value: stats.totalActiveStudents,
+      icon: <UserOutlined />,
+      color: '#2b6cb0',
+      bg: '#EFF6FF',
+      desc: stats.currentSemesterStats?.semester_name 
+        ? `Enrolled in ${stats.currentSemesterStats.semester_name}`
+        : 'Enrolled this term',
     },
   ];
 
@@ -132,10 +156,22 @@ export default function FinanceDashboard() {
   const systemInfo = [
     { label: 'Officer Name', value: user.name, icon: <UserOutlined /> },
     { label: 'Officer ID', value: user.id, icon: <IdcardOutlined /> },
-    { label: 'Role', value: 'Finance Officer', icon: <DollarOutlined /> },
-    { label: 'Portal', value: 'Web Finance Portal', icon: <GlobalOutlined /> },
-    { label: 'Academic Year', value: getAcademicYearDisplay(), icon: <CalendarOutlined /> },
     { label: 'Semester', value: getSemesterDisplay(), icon: <CalendarOutlined /> },
+    { 
+      label: 'All-time Collected', 
+      value: stats.totalPaid !== null ? `$${Number(stats.totalPaid).toLocaleString()}` : '—', 
+      icon: <CheckCircleOutlined /> 
+    },
+    { 
+      label: 'All-time Outstanding', 
+      value: stats.totalPending !== null ? `$${Number(stats.totalPending).toLocaleString()}` : '—', 
+      icon: <ClockCircleOutlined /> 
+    },
+    { 
+      label: 'Total Transactions', 
+      value: stats.totalTransactions !== null ? stats.totalTransactions.toLocaleString() : '—', 
+      icon: <FileTextOutlined /> 
+    },
   ];
 
   const transactionColumns = [
@@ -165,13 +201,18 @@ export default function FinanceDashboard() {
     },
     {
       title: 'Status',
-      dataIndex: 'status',
-      key: 'status',
-      render: v => (
-        <Tag color={v === 'paid' ? 'green' : 'red'}>
-          {v === 'paid' ? 'Paid' : 'Pending'}
-        </Tag>
-      ),
+      dataIndex: 'computed_status',
+      key: 'computed_status',
+      render: (v) => {
+        const statusConfig = {
+          paid:    { color: 'green',  label: 'Paid' },
+          pending: { color: 'orange', label: 'Pending' },
+          overdue: { color: 'red',    label: 'Overdue' },
+          partial: { color: 'blue',   label: 'Partial' },
+        };
+        const config = statusConfig[v] || statusConfig.pending;
+        return <Tag color={config.color}>{config.label}</Tag>;
+      },
     },
     {
       title: 'Due Date',
@@ -237,7 +278,7 @@ export default function FinanceDashboard() {
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         {statCards.map((card, i) => (
           <Col xs={24} sm={12} lg={6} key={i}>
-            <Card style={{ borderRadius: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+            <Card style={{ borderRadius: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', cursor: card.clickable ? 'pointer' : 'default', transition: 'transform 0.15s', }} onClick={card.onClick} hoverable={card.clickable}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <Text style={{ color: '#64748B', fontSize: 13, fontWeight: 500 }}>
@@ -362,7 +403,7 @@ export default function FinanceDashboard() {
                   <Text style={{ color: '#64748B', fontSize: 13 }}>{item.label}</Text>
                 </div>
                 <Text style={{ fontWeight: 600, color: '#1E293B', fontSize: 13 }}>
-                  {semesterLoading && (item.label === 'Academic Year' || item.label === 'Semester') 
+                  {semesterLoading && item.label === 'Semester' 
                     ? <Spin size="small" /> 
                     : item.value}
                 </Text>
