@@ -4,6 +4,7 @@ import Login from './Pages/Login';
 
 import FinanceDashboard from './Pages/Finance/FinanceDashboard';
 import StudentSearch from './Pages/Finance/StudentSearch';
+import StudentAccount from './Pages/Finance/StudentAccount';
 
 
 import AdminDashboard from './Pages/Admin/AdminDashboard';
@@ -97,9 +98,9 @@ export default function App() {
           </PrivateRoute>
         } />
 
-        <Route path="/finance/mark-payment" element={
+        <Route path="/finance/student/:student_id" element={
           <PrivateRoute role="finance_officer">
-            <div>Mark Payment Page - Coming Soon</div>
+            <StudentAccount />
           </PrivateRoute>
         } />
 
