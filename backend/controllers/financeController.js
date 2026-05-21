@@ -115,32 +115,154 @@ const addPayment = async (req, res) => {
 
   const getFinanceStats = async (req, res) => {
     try {
-      const [[paid]] = await db.promise().query(
-        `SELECT COALESCE(SUM(amount_paid), 0) AS totalPaid FROM student_financial_transactions WHERE status = 'paid'`
+      // Get current semester for "this semester" focused metrics
+      const [currentSemesterRows] = await db.promise().query(
+        `SELECT id, name, term, academic_year
+         FROM semesters
+         WHERE is_current = 1 AND is_active = 1
+         LIMIT 1`
       );
-      const [[pending]] = await db.promise().query(
-        `SELECT COALESCE(SUM(amount), 0) AS totalPending FROM student_financial_transactions WHERE status = 'pending'`
+  
+      const currentSemester = currentSemesterRows[0] || null;
+      const currentSemesterId = currentSemester?.id || null;
+  
+      // ============================================================
+      // 1. TOTAL COLLECTED (all time, sum of amount_paid)
+      //    amount_paid is accurate even on partial-paid rows
+      //    Skip parent rows (they have amount_paid=0; installments hold the real paid amount)
+      // ============================================================
+      const [[paidTotals]] = await db.promise().query(
+        `SELECT COALESCE(SUM(amount_paid), 0) AS total_paid
+         FROM student_financial_transactions
+         WHERE amount_paid > 0
+           AND (parent_transaction_id IS NOT NULL OR total_installments IS NULL)`
       );
-      const [[total]] = await db.promise().query(
-        `SELECT COUNT(*) AS totalTransactions FROM student_financial_transactions`
+  
+      // ============================================================
+      // 2. TOTAL OUTSTANDING (everything not yet collected)
+      //    Skip parent rows of split tuitions (their installments carry the real amount)
+      // ============================================================
+      const [[outstandingTotals]] = await db.promise().query(
+        `SELECT COALESCE(SUM(amount - COALESCE(amount_paid, 0)), 0) AS total_outstanding
+         FROM student_financial_transactions
+         WHERE status != 'paid'
+           AND (parent_transaction_id IS NOT NULL OR total_installments IS NULL)`
       );
-      const [recent] = await db.promise().query(
-        `SELECT t.id, t.student_id, u.name AS student_name, t.description, t.amount, t.status, t.due_date
+  
+      // ============================================================
+      // 3. TOTAL OVERDUE (past due_date and not paid)
+      // ============================================================
+      const [[overdueTotals]] = await db.promise().query(
+        `SELECT 
+            COALESCE(SUM(amount - COALESCE(amount_paid, 0)), 0) AS total_overdue,
+            COUNT(*) AS overdue_count
+         FROM student_financial_transactions
+         WHERE status != 'paid'
+           AND due_date IS NOT NULL
+           AND due_date < CURDATE()
+           AND (parent_transaction_id IS NOT NULL OR total_installments IS NULL)`
+      );
+  
+      // ============================================================
+      // 4. CURRENT SEMESTER METRICS (focused view)
+      // ============================================================
+      let currentSemesterStats = null;
+  
+      if (currentSemesterId) {
+        const [[sem]] = await db.promise().query(
+          `SELECT 
+              COALESCE(SUM(CASE 
+                WHEN amount_paid > 0 THEN amount_paid 
+                ELSE 0 
+              END), 0) AS collected,
+              COALESCE(SUM(CASE 
+                WHEN status != 'paid' THEN amount - COALESCE(amount_paid, 0)
+                ELSE 0
+              END), 0) AS outstanding,
+              COUNT(DISTINCT student_id) AS unique_students
+           FROM student_financial_transactions
+           WHERE semester_id = ?
+             AND (parent_transaction_id IS NOT NULL OR total_installments IS NULL)`,
+          [currentSemesterId]
+        );
+  
+        currentSemesterStats = {
+          semester_name: currentSemester.name,
+          collected: Number(sem.collected),
+          outstanding: Number(sem.outstanding),
+          unique_students: Number(sem.unique_students),
+        };
+      }
+  
+      // ============================================================
+      // 5. RECENT TRANSACTIONS (last 10, excluding parent rows)
+      //    Show only actual chargeable rows so the table doesn't repeat
+      // ============================================================
+      const [recentTransactions] = await db.promise().query(
+        `SELECT 
+            t.id, 
+            t.student_id, 
+            u.name AS student_name, 
+            t.type,
+            t.description, 
+            t.amount,
+            t.amount_paid,
+            t.status,
+            t.due_date,
+            t.payment_date,
+            CASE 
+              WHEN t.status = 'paid' THEN 'paid'
+              WHEN t.status != 'paid' AND t.due_date IS NOT NULL AND t.due_date < CURDATE() THEN 'overdue'
+              WHEN t.amount_paid > 0 THEN 'partial'
+              ELSE 'pending'
+            END AS computed_status,
+            s.name AS semester_name
          FROM student_financial_transactions t
          JOIN users u ON t.student_id = u.id
-         ORDER BY t.id DESC LIMIT 10`
+         LEFT JOIN semesters s ON t.semester_id = s.id
+         WHERE t.parent_transaction_id IS NOT NULL OR t.total_installments IS NULL
+         ORDER BY 
+           COALESCE(t.payment_date, t.updated_at, t.created_at) DESC
+         LIMIT 10`
       );
+  
+      // ============================================================
+      // 6. TOTAL ACTIVE STUDENTS (enrolled in current semester)
+      // ============================================================
+      let totalActiveStudents = 0;
+      if (currentSemesterId) {
+        const [[count]] = await db.promise().query(
+          `SELECT COUNT(DISTINCT student_id) AS cnt
+           FROM course_enrollments
+           WHERE semester_id = ?`,
+          [currentSemesterId]
+        );
+        totalActiveStudents = Number(count.cnt);
+      }
+  
       return res.status(200).json({
         success: true,
         data: {
-          totalPaid: paid.totalPaid,
-          totalPending: pending.totalPending,
-          totalTransactions: total.totalTransactions,
-          recentTransactions: recent,
+          // Existing fields (kept for backward compat with current dashboard)
+          totalPaid: Number(paidTotals.total_paid),
+          totalPending: Number(outstandingTotals.total_outstanding),
+          totalTransactions: recentTransactions.length, // count comes from a separate query if needed
+          recentTransactions,
+  
+          // New richer fields
+          totalOverdue: Number(overdueTotals.total_overdue),
+          overdueCount: Number(overdueTotals.overdue_count),
+          totalActiveStudents,
+          currentSemesterStats,
         }
       });
     } catch (error) {
-      return res.status(500).json({ success: false, message: 'Server error' });
+      console.error('Finance stats error:', error);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Server error',
+        error: error.message 
+      });
     }
   };
 
