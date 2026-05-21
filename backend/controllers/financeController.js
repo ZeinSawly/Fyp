@@ -857,4 +857,689 @@ const addPayment = async (req, res) => {
     }
   };
 
-  module.exports = {addPayment, markPaymentPaid, getStudentPendingPayments, getFinanceStats, searchStudents, getStudentAccount, recordPayment};
+  // Helper: get the active credit price for a major as of a date
+const getEffectiveCreditPrice = async (connection, majorId, asOfDate) => {
+  const [rows] = await connection.query(
+    `SELECT price_per_credit
+     FROM credit_pricing
+     WHERE major_id = ?
+       AND effective_from <= ?
+       AND (effective_until IS NULL OR effective_until >= ?)
+     ORDER BY effective_from DESC
+     LIMIT 1`,
+    [majorId, asOfDate, asOfDate]
+  );
+  return rows.length > 0 ? Number(rows[0].price_per_credit) : null;
+};
+
+// Helper: get the active fee price for a fee type as of a date
+const getEffectiveFeePrice = async (connection, feeTypeId, majorId, asOfDate) => {
+  // First try a major-specific override
+  const [rows] = await connection.query(
+    `SELECT amount, major_id
+     FROM fee_pricing
+     WHERE fee_type_id = ?
+       AND effective_from <= ?
+       AND (effective_until IS NULL OR effective_until >= ?)
+       AND (major_id = ? OR major_id IS NULL)
+     ORDER BY (major_id = ?) DESC, effective_from DESC
+     LIMIT 1`,
+    [feeTypeId, asOfDate, asOfDate, majorId, majorId]
+  );
+  return rows.length > 0 ? Number(rows[0].amount) : null;
+};
+
+// Helper: compute installment due dates from semester dates
+const computeInstallmentDueDates = (startDate, endDate) => {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const totalDays = Math.floor((end - start) / (1000 * 60 * 60 * 24));
+
+  // Spread across the semester (1 week in, 1/3, 2/3, 2 weeks before end)
+  const offsets = [
+    7,                                  // 1 week after start
+    Math.floor(totalDays / 3),          // ~1/3 in
+    Math.floor((totalDays * 2) / 3),    // ~2/3 in
+    Math.max(totalDays - 14, totalDays - 14), // 2 weeks before end
+  ];
+
+  return offsets.map((days) => {
+    const d = new Date(start);
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split('T')[0]; // YYYY-MM-DD
+  });
+};
+
+// Helper: compute the bill for one student (used by both preview and confirm)
+const computeStudentBill = async (connection, studentId, semester) => {
+  const semesterId = semester.id;
+  const semesterStart = semester.start_date;
+
+  // 1. Get the student + major
+  const [[studentInfo]] = await connection.query(
+    `SELECT u.id, u.name, s.major_id, s.gpa, m.name AS major_name, s.campus
+     FROM users u
+     JOIN students s ON s.user_id = u.id
+     LEFT JOIN majors m ON s.major_id = m.id
+     WHERE u.id = ?`,
+    [studentId]
+  );
+
+  if (!studentInfo) return null;
+
+  // 2. Count enrolled credits
+  const [[creditRow]] = await connection.query(
+    `SELECT COALESCE(SUM(c.credits), 0) AS total_credits, COUNT(*) AS sections_count
+     FROM course_enrollments ce
+     JOIN course_sections cs ON ce.section_id = cs.id
+     JOIN courses c ON cs.course_id = c.id
+     WHERE ce.student_id = ? AND ce.semester_id = ?`,
+    [studentId, semesterId]
+  );
+
+  const totalCredits = Number(creditRow.total_credits);
+  const sectionsCount = Number(creditRow.sections_count);
+
+  if (totalCredits === 0) {
+    return {
+      student: studentInfo,
+      total_credits: 0,
+      sections_count: 0,
+      base_tuition: 0,
+      discounts_applied: [],
+      total_discount_amount: 0,
+      final_tuition: 0,
+      fees: [],
+      total_fees: 0,
+      total_due: 0,
+      installment_count: 4,
+      installment_amount: 0,
+      installment_due_dates: [],
+      skipped_reason: 'No course enrollments',
+    };
+  }
+
+  // 3. Look up credit price
+  const creditPrice = await getEffectiveCreditPrice(
+    connection,
+    studentInfo.major_id,
+    semesterStart
+  );
+
+  if (creditPrice === null) {
+    return {
+      student: studentInfo,
+      total_credits: totalCredits,
+      sections_count: sectionsCount,
+      base_tuition: 0,
+      discounts_applied: [],
+      total_discount_amount: 0,
+      final_tuition: 0,
+      fees: [],
+      total_fees: 0,
+      total_due: 0,
+      installment_count: 4,
+      installment_amount: 0,
+      installment_due_dates: [],
+      skipped_reason: 'No credit price set for major',
+    };
+  }
+
+  // 4. Base tuition
+  const baseTuition = totalCredits * creditPrice;
+
+  // 5. Find applicable active discounts
+  const [discountRows] = await connection.query(
+    `SELECT 
+        sd.id,
+        sd.percentage,
+        sd.fixed_amount,
+        dt.scope,
+        sd.semester_id,
+        sd.academic_year,
+        dt.code AS type_code,
+        dt.name AS type_name,
+        dt.calculation,
+        dt.applies_to
+     FROM student_discounts sd
+     JOIN discount_types dt ON sd.discount_type_id = dt.id
+     WHERE sd.student_id = ?
+       AND sd.status = 'active'
+       AND dt.is_active = 1
+       AND (
+         (dt.scope = 'semester' AND sd.semester_id = ?)
+         OR (dt.scope = 'academic_year' AND sd.academic_year = ?)
+       )
+       AND dt.applies_to IN ('tuition_only', 'tuition_and_fees')`,
+    [studentId, semesterId, semester.academic_year]
+  );
+
+  // 6. Compute discount totals
+  let totalPercentage = 0;
+  let totalFixedAmount = 0;
+  const discountsApplied = [];
+
+  for (const d of discountRows) {
+    if (d.calculation === 'percentage' && d.percentage) {
+      totalPercentage += Number(d.percentage);
+      discountsApplied.push({
+        id: d.id,
+        type_name: d.type_name,
+        type_code: d.type_code,
+        calculation: 'percentage',
+        value: Number(d.percentage),
+        amount_off: 0, // computed below
+      });
+    } else if (d.calculation === 'fixed_amount' && d.fixed_amount) {
+      totalFixedAmount += Number(d.fixed_amount);
+      discountsApplied.push({
+        id: d.id,
+        type_name: d.type_name,
+        type_code: d.type_code,
+        calculation: 'fixed_amount',
+        value: Number(d.fixed_amount),
+        amount_off: Number(d.fixed_amount),
+      });
+    }
+  }
+
+  // Cap percentage at 100%
+  totalPercentage = Math.min(totalPercentage, 100);
+
+  // Apply percentages first (additively), then fixed amounts
+  const percentageDiscount = baseTuition * (totalPercentage / 100);
+  let finalTuition = baseTuition - percentageDiscount - totalFixedAmount;
+  if (finalTuition < 0) finalTuition = 0;
+
+  // Round to 2 decimal places
+  finalTuition = Math.round(finalTuition * 100) / 100;
+  const totalDiscountAmount = Math.round((baseTuition - finalTuition) * 100) / 100;
+
+  // Backfill per-discount amount_off for percentage-based ones
+  discountsApplied.forEach((d) => {
+    if (d.calculation === 'percentage') {
+      d.amount_off = Math.round(baseTuition * (d.value / 100) * 100) / 100;
+    }
+  });
+
+  // 7. Compute per-semester fees
+  const [feeTypes] = await connection.query(
+    `SELECT id, code, name
+     FROM fee_types
+     WHERE charge_basis = 'per_semester' AND is_active = 1
+     ORDER BY id`
+  );
+
+  const fees = [];
+  let totalFees = 0;
+
+  for (const ft of feeTypes) {
+    const amount = await getEffectiveFeePrice(
+      connection,
+      ft.id,
+      studentInfo.major_id,
+      semesterStart
+    );
+
+    if (amount !== null && amount > 0) {
+      fees.push({
+        fee_type_id: ft.id,
+        code: ft.code,
+        name: ft.name,
+        amount,
+      });
+      totalFees += amount;
+    }
+  }
+
+  totalFees = Math.round(totalFees * 100) / 100;
+  const totalDue = Math.round((finalTuition + totalFees) * 100) / 100;
+
+  // 8. Installments
+  const installmentCount = 4;
+  const installmentAmount = Math.round((finalTuition / installmentCount) * 100) / 100;
+  const installmentDueDates = computeInstallmentDueDates(
+    semester.start_date,
+    semester.end_date
+  );
+
+  return {
+    student: studentInfo,
+    total_credits: totalCredits,
+    sections_count: sectionsCount,
+    credit_price: creditPrice,
+    base_tuition: baseTuition,
+    discounts_applied: discountsApplied,
+    total_discount_amount: totalDiscountAmount,
+    final_tuition: finalTuition,
+    fees,
+    total_fees: totalFees,
+    total_due: totalDue,
+    installment_count: installmentCount,
+    installment_amount: installmentAmount,
+    installment_due_dates: installmentDueDates,
+    skipped_reason: null,
+  };
+};
+
+// =================================================================
+// MAIN ENDPOINT: POST /api/finance/semesters/:id/preview-bills
+// =================================================================
+const previewSemesterBills = async (req, res) => {
+  const { id: semesterId } = req.params;
+
+  if (!semesterId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Semester ID is required',
+    });
+  }
+
+  const connection = await db.promise().getConnection();
+
+  try {
+    // 1. Verify semester exists
+    const [[semester]] = await connection.query(
+      `SELECT id, name, code, term, academic_year, start_date, end_date, 
+              enrollment_end_date, is_active
+       FROM semesters
+       WHERE id = ?`,
+      [semesterId]
+    );
+
+    if (!semester) {
+      return res.status(404).json({
+        success: false,
+        message: 'Semester not found',
+      });
+    }
+
+    // Check that the enrollment period has ended
+    if (semester.enrollment_end_date) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // start of day
+      const enrollmentEnd = new Date(semester.enrollment_end_date);
+
+      if (today <= enrollmentEnd) {
+        return res.status(403).json({
+          success: false,
+          message: `Cannot generate bills yet. Enrollment period for ${semester.name} ends on ${enrollmentEnd.toLocaleDateString()}. Bills can only be generated after this date.`,
+          data: {
+            semester_name: semester.name,
+            enrollment_end_date: semester.enrollment_end_date,
+            days_until_eligible: Math.ceil((enrollmentEnd - today) / (1000 * 60 * 60 * 24)),
+          },
+        });
+      }
+    }
+
+    // 2. Get all enrolled student IDs for this semester
+    const [enrolledStudents] = await connection.query(
+      `SELECT DISTINCT ce.student_id
+       FROM course_enrollments ce
+       WHERE ce.semester_id = ?`,
+      [semesterId]
+    );
+
+    if (enrolledStudents.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          semester,
+          students: [],
+          summary: {
+            total_students: 0,
+            students_to_bill: 0,
+            students_already_billed: 0,
+            students_skipped: 0,
+            grand_total_tuition: 0,
+            grand_total_discount: 0,
+            grand_total_fees: 0,
+            grand_total_due: 0,
+          },
+        },
+      });
+    }
+
+    // 3. Find students who already have bills for this semester (tuition type)
+    const studentIds = enrolledStudents.map((s) => s.student_id);
+    const [alreadyBilledRows] = await connection.query(
+      `SELECT DISTINCT student_id
+       FROM student_financial_transactions
+       WHERE semester_id = ?
+         AND type = 'tuition'
+         AND student_id IN (?)`,
+      [semesterId, studentIds]
+    );
+
+    const alreadyBilledSet = new Set(alreadyBilledRows.map((r) => r.student_id));
+
+    // 4. Compute bills for each student
+    const studentBills = [];
+    const grandTotals = {
+      tuition: 0,
+      discount: 0,
+      fees: 0,
+      total: 0,
+    };
+    let toBillCount = 0;
+    let skippedCount = 0;
+
+    for (const { student_id } of enrolledStudents) {
+      const alreadyBilled = alreadyBilledSet.has(student_id);
+      const bill = await computeStudentBill(connection, student_id, semester);
+
+      if (!bill) continue;
+
+      const willBill = !alreadyBilled && !bill.skipped_reason;
+
+      studentBills.push({
+        ...bill,
+        already_billed: alreadyBilled,
+        will_bill: willBill,
+      });
+
+      if (willBill) {
+        toBillCount++;
+        grandTotals.tuition += bill.final_tuition;
+        grandTotals.discount += bill.total_discount_amount;
+        grandTotals.fees += bill.total_fees;
+        grandTotals.total += bill.total_due;
+      } else if (!alreadyBilled) {
+        skippedCount++;
+      }
+    }
+
+    const summary = {
+      total_students: enrolledStudents.length,
+      students_to_bill: toBillCount,
+      students_already_billed: alreadyBilledSet.size,
+      students_skipped: skippedCount,
+      grand_total_tuition: Math.round(grandTotals.tuition * 100) / 100,
+      grand_total_discount: Math.round(grandTotals.discount * 100) / 100,
+      grand_total_fees: Math.round(grandTotals.fees * 100) / 100,
+      grand_total_due: Math.round(grandTotals.total * 100) / 100,
+    };
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        semester,
+        students: studentBills,
+        summary,
+      },
+    });
+  } catch (error) {
+    console.error('Preview semester bills error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  } finally {
+    connection.release();
+  }
+};
+
+// =================================================================
+// POST /api/finance/semesters/:id/generate-bills
+// Actually inserts all the rows for students who aren't already billed
+// =================================================================
+const generateSemesterBills = async (req, res) => {
+  const { id: semesterId } = req.params;
+
+  if (!semesterId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Semester ID is required',
+    });
+  }
+
+  const connection = await db.promise().getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // 1. Verify semester exists
+    const [[semester]] = await connection.query(
+      `SELECT id, name, code, term, academic_year, start_date, end_date,
+              enrollment_end_date, is_active
+       FROM semesters
+       WHERE id = ?`,
+      [semesterId]
+    );
+
+    if (!semester) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Semester not found',
+      });
+    }
+
+    // Check that the enrollment period has ended
+    if (semester.enrollment_end_date) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // start of day
+      const enrollmentEnd = new Date(semester.enrollment_end_date);
+
+      if (today <= enrollmentEnd) {
+        return res.status(403).json({
+          success: false,
+          message: `Cannot generate bills yet. Enrollment period for ${semester.name} ends on ${enrollmentEnd.toLocaleDateString()}. Bills can only be generated after this date.`,
+          data: {
+            semester_name: semester.name,
+            enrollment_end_date: semester.enrollment_end_date,
+            days_until_eligible: Math.ceil((enrollmentEnd - today) / (1000 * 60 * 60 * 24)),
+          },
+        });
+      }
+    }
+
+    // 2. Get enrolled student IDs
+    const [enrolledStudents] = await connection.query(
+      `SELECT DISTINCT ce.student_id
+       FROM course_enrollments ce
+       WHERE ce.semester_id = ?`,
+      [semesterId]
+    );
+
+    if (enrolledStudents.length === 0) {
+      await connection.rollback();
+      return res.status(200).json({
+        success: true,
+        message: 'No enrolled students for this semester',
+        data: { generated: 0, skipped: 0, errors: [] },
+      });
+    }
+
+    // 3. Find students who already have bills (lock the rows during generation to prevent races)
+    const studentIds = enrolledStudents.map((s) => s.student_id);
+    const [alreadyBilledRows] = await connection.query(
+      `SELECT DISTINCT student_id
+       FROM student_financial_transactions
+       WHERE semester_id = ?
+         AND type = 'tuition'
+         AND student_id IN (?)
+       FOR UPDATE`,
+      [semesterId, studentIds]
+    );
+
+    const alreadyBilledSet = new Set(alreadyBilledRows.map((r) => r.student_id));
+
+    // 4. For each eligible student, compute + insert
+    const results = {
+      generated: [],
+      skipped: [],
+      errors: [],
+    };
+
+    for (const { student_id } of enrolledStudents) {
+      if (alreadyBilledSet.has(student_id)) {
+        results.skipped.push({
+          student_id,
+          reason: 'Already billed for this semester',
+        });
+        continue;
+      }
+
+      try {
+        const bill = await computeStudentBill(connection, student_id, semester);
+
+        if (!bill || bill.skipped_reason) {
+          results.skipped.push({
+            student_id,
+            reason: bill?.skipped_reason || 'Could not compute bill',
+          });
+          continue;
+        }
+
+        // Skip if no credits enrolled
+        if (bill.total_credits === 0) {
+          results.skipped.push({
+            student_id,
+            reason: 'No credits enrolled',
+          });
+          continue;
+        }
+
+        // ============================================
+        // INSERT THE BILLS
+        // ============================================
+
+        // (a) Parent tuition transaction (if there is tuition to charge)
+        let parentTuitionId = null;
+
+        if (bill.final_tuition > 0) {
+          const description = `${semester.name} Tuition`;
+          const [tuitionResult] = await connection.query(
+            `INSERT INTO student_financial_transactions
+               (student_id, semester_id, type, description,
+                amount, original_amount, discount_amount,
+                amount_paid, status, total_installments)
+             VALUES (?, ?, 'tuition', ?, ?, ?, ?, 0, 'pending', ?)`,
+            [
+              student_id,
+              semesterId,
+              description,
+              bill.final_tuition,
+              bill.base_tuition,
+              bill.total_discount_amount,
+              bill.installment_count,
+            ]
+          );
+
+          parentTuitionId = tuitionResult.insertId;
+
+          // (b) Insert installments
+          for (let i = 0; i < bill.installment_count; i++) {
+            const installmentNumber = i + 1;
+            const dueDate = bill.installment_due_dates[i];
+
+            // Distribute the amount: first 3 get rounded down, last one absorbs the remainder
+            let installmentAmount;
+            if (i < bill.installment_count - 1) {
+              installmentAmount = bill.installment_amount;
+            } else {
+              // Last installment absorbs rounding to ensure sum matches exactly
+              const sumSoFar = bill.installment_amount * (bill.installment_count - 1);
+              installmentAmount = Math.round((bill.final_tuition - sumSoFar) * 100) / 100;
+            }
+
+            await connection.query(
+              `INSERT INTO student_financial_transactions
+                 (student_id, semester_id, parent_transaction_id,
+                  installment_number, total_installments,
+                  type, description, due_date,
+                  amount, amount_paid, status)
+               VALUES (?, ?, ?, ?, ?, 'tuition_installment', ?, ?, ?, 0, 'pending')`,
+              [
+                student_id,
+                semesterId,
+                parentTuitionId,
+                installmentNumber,
+                bill.installment_count,
+                `Tuition Installment ${installmentNumber} of ${bill.installment_count}`,
+                dueDate,
+                installmentAmount,
+              ]
+            );
+          }
+        }
+
+        // (c) Insert per-semester fees (each due with first installment)
+        const firstInstallmentDate = bill.installment_due_dates[0];
+
+        for (const fee of bill.fees) {
+          await connection.query(
+            `INSERT INTO student_financial_transactions
+               (student_id, semester_id, type, description, due_date,
+                amount, original_amount, amount_paid, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'pending')`,
+            [
+              student_id,
+              semesterId,
+              fee.code.toLowerCase(),
+              `${semester.name} ${fee.name}`,
+              firstInstallmentDate,
+              fee.amount,
+              fee.amount,
+            ]
+          );
+        }
+
+        results.generated.push({
+          student_id,
+          student_name: bill.student.name,
+          tuition: bill.final_tuition,
+          discount: bill.total_discount_amount,
+          fees: bill.total_fees,
+          total: bill.total_due,
+          installment_count: bill.installment_count,
+        });
+      } catch (perStudentError) {
+        console.error(`Error generating bill for student ${student_id}:`, perStudentError);
+        results.errors.push({
+          student_id,
+          error: perStudentError.message,
+        });
+      }
+    }
+
+    // 5. If any errors occurred, rollback everything (atomic — all or nothing)
+    if (results.errors.length > 0) {
+      await connection.rollback();
+      return res.status(500).json({
+        success: false,
+        message: `Bill generation failed for ${results.errors.length} student(s). No bills were created.`,
+        data: results,
+      });
+    }
+
+    await connection.commit();
+
+    return res.status(200).json({
+      success: true,
+      message: `Generated bills for ${results.generated.length} student(s), skipped ${results.skipped.length}`,
+      data: {
+        semester_name: semester.name,
+        generated_count: results.generated.length,
+        skipped_count: results.skipped.length,
+        generated: results.generated,
+        skipped: results.skipped,
+      },
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Generate semester bills error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  } finally {
+    connection.release();
+  }
+};
+
+  module.exports = {addPayment, markPaymentPaid, getStudentPendingPayments, getFinanceStats, searchStudents, getStudentAccount, recordPayment, previewSemesterBills, generateSemesterBills};

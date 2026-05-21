@@ -4,7 +4,7 @@ import {
   DashboardOutlined, LogoutOutlined, MenuFoldOutlined,
   MenuUnfoldOutlined, BellOutlined, DollarOutlined,
   CheckCircleOutlined, BankOutlined, SearchOutlined,
-  FileTextOutlined, SafetyCertificateOutlined,
+  FileTextOutlined, SafetyCertificateOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -24,13 +24,7 @@ export default function FinanceLayout({ children, title = 'Dashboard' }) {
 
   const menuItems = [
     { key: '/finance', icon: <DashboardOutlined />, label: 'Dashboard' },
-    {
-      key: 'payments', icon: <DollarOutlined />, label: 'Payments',
-      children: [
-        { key: '/finance/add-payment', icon: <BankOutlined />, label: 'Add Payment' },
-        { key: '/finance/mark-payment', icon: <CheckCircleOutlined />, label: 'Mark Payment Paid' },
-      ],
-    },
+    { key: '/finance/generate-bills', icon: <ThunderboltOutlined />, label: 'Generate Bills' },
     { key: '/finance/student-summary', icon: <SearchOutlined />, label: 'Student Search' },
     { key: '/finance/payment-report', icon: <FileTextOutlined />, label: 'Payment Reports' },
   ];

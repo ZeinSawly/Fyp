@@ -161,3 +161,31 @@ CREATE TABLE payments (
 
   
 
+
+For the late fee payment, I created a penalties table:
+
+CREATE TABLE penalties (
+  id INT NOT NULL AUTO_INCREMENT,
+  installment_id BIGINT NOT NULL,         -- which installment this penalty is for
+  student_id INT NOT NULL,                 -- denormalized for fast lookup
+  week_number INT NOT NULL,                -- 1, 2, 3, ... (which week of being late)
+  amount DECIMAL(10,2) NOT NULL,           -- the penalty amount ($100 typically)
+  transaction_id BIGINT NOT NULL,          -- the corresponding row in student_financial_transactions
+  applied_date DATE NOT NULL,              -- when the penalty was triggered
+  status ENUM('active', 'waived') NOT NULL DEFAULT 'active',
+  waived_by INT DEFAULT NULL,              -- officer who waived it (if applicable)
+  waived_at TIMESTAMP DEFAULT NULL,
+  waive_reason TEXT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  
+  PRIMARY KEY (id),
+  UNIQUE KEY unique_week_per_installment (installment_id, week_number),
+  KEY idx_installment (installment_id),
+  KEY idx_student (student_id),
+  KEY idx_transaction (transaction_id),
+  
+  CONSTRAINT fk_penalty_installment FOREIGN KEY (installment_id) REFERENCES student_financial_transactions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_penalty_student FOREIGN KEY (student_id) REFERENCES students(user_id),
+  CONSTRAINT fk_penalty_transaction FOREIGN KEY (transaction_id) REFERENCES student_financial_transactions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_penalty_waived_by FOREIGN KEY (waived_by) REFERENCES users(id)
+);

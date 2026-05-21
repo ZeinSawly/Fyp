@@ -73,9 +73,9 @@ const buildReceiptHTML = (receipt, logoBase64, brandColor = '#1a365d') => {
   // Finance office contact details (customize these)
   const financeOffice = {
     phone: '+961 1 234 567',
-    email: 'finance@antonine.edu',
+    email: 'finance@ua.edu.lb',
     hours: 'Mon-Fri: 8:00 AM - 4:00 PM',
-    location: 'Main Building, Ground Floor'
+    location: 'Building A, Ground Floor'
   };
 
   return `

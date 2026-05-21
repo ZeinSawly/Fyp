@@ -5,6 +5,7 @@ import Login from './Pages/Login';
 import FinanceDashboard from './Pages/Finance/FinanceDashboard';
 import StudentSearch from './Pages/Finance/StudentSearch';
 import StudentAccount from './Pages/Finance/StudentAccount';
+import GenerateBills from './Pages/Finance/GenerateBills';
 
 
 import AdminDashboard from './Pages/Admin/AdminDashboard';
@@ -104,9 +105,9 @@ export default function App() {
           </PrivateRoute>
         } />
 
-        <Route path="/finance/student-summary" element={
+        <Route path="/finance/generate-bills" element={
           <PrivateRoute role="finance_officer">
-            <div>Student Summary Page - Coming Soon</div>
+            <GenerateBills />
           </PrivateRoute>
         } />
 
