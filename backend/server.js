@@ -9,6 +9,8 @@ const adminRoutes = require('./routes/adminRoutes');
 const instructorRoutes = require('./routes/instructorRoutes');
 const quizRoutes = require('./routes/quizRoutes');
 const financeRoutes = require('./routes/financeRoutes');
+const commonRoutes = require('./routes/commonRoutes');
+
 
 
 const app = express();
@@ -23,6 +25,8 @@ app.use(cors({
 app.use(express.json());
 
 app.use('/api', authRoutes);
+
+app.use('/api/common', verifyToken, commonRoutes);
 
 app.use('/api/students', verifyToken, studentRoutes);
 

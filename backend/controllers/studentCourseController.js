@@ -99,38 +99,6 @@ const getCoursesForStudent = async (req, res) => {
   }
 };
 
-const getCurrentSemester = async (req, res) => {
-  try {
-    const [rows] = await db.promise().query(
-      `SELECT id, name, code, term, academic_year, 
-              start_date, end_date,
-              enrollment_start_date, enrollment_end_date
-       FROM semesters
-       WHERE is_current = 1 AND is_active = 1
-       LIMIT 1`
-    );
-
-    if (rows.length === 0) {
-      return res.status(200).json({
-        success: true,
-        data: null,
-        message: 'No current semester set'
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      data: rows[0]
-    });
-  } catch (error) {
-    console.error('Error fetching current semester:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-};
 // Add this to your studentCourseController.js or create a new controller
 
 // Add this function to your existing studentCourseController.js
@@ -1124,5 +1092,4 @@ module.exports = {
   swapCourseWithCart,             
   getEnrolledCoursesForSwap,      
   getCartItemsForSwap,
-  getCurrentSemester
 };

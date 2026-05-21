@@ -57,7 +57,7 @@ export default function FinanceDashboard() {
   const fetchCurrentSemester = async () => {
     setSemesterLoading(true);
     try {
-      const res = await api.get('/api/admin/semesters/current');
+      const res = await api.get('/api/common/current-semester');
       if (res.data.success && res.data.data) {
         setCurrentSemester(res.data.data);
       } else {

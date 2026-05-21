@@ -17,7 +17,7 @@ export default function StudentCourses({ route, navigation }) {
 
   // Fetch current semester once on mount
   useEffect(() => {
-    api.get('/api/students/current-semester')
+    api.get('/api/common/current-semester')
       .then((res) => {
         if (res.data.success && res.data.data) {
           setCurrentSemester(res.data.data);

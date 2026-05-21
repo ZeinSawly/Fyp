@@ -35,7 +35,6 @@ const {
 
 const {
     getSemesters,
-    getCurrentSemester,
     createSemester,
     updateSemester,
     setCurrentSemester,
@@ -102,7 +101,6 @@ router.delete('/grade-component/:component_id', deleteGradeComponent);
 
 // Semester routes
 router.get('/semesters', getSemesters);
-router.get('/semesters/current', getCurrentSemester);
 router.post('/semesters', createSemester);
 router.put('/semesters/:id', updateSemester);
 router.put('/semesters/:id/set-current', setCurrentSemester);

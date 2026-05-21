@@ -2,13 +2,11 @@
 const express = require('express');
 const router = express.Router();
 const { getStudentSchedule } = require('../controllers/studScheduleController');
-const { getFinancialSummary, getStudentFinancialSemesters } = require('../controllers/studentFinancialController');const {getCoursesForStudent, getCourseSchedule, addToCart, getStudentCart, removeCartItem, enrollCartItem, dropCourse, getEnrolledCourses, swapCourseWithCart, getEnrolledCoursesForSwap, getCartItemsForSwap, getCurrentSemester, } = require('../controllers/studentCourseController');
+const { getFinancialSummary, getStudentFinancialSemesters } = require('../controllers/studentFinancialController');
+const {getCoursesForStudent, getCourseSchedule, addToCart, getStudentCart, removeCartItem, enrollCartItem, dropCourse, getEnrolledCourses, swapCourseWithCart, getEnrolledCoursesForSwap, getCartItemsForSwap, } = require('../controllers/studentCourseController');
 const { getStudentAttendance, getStudentAbsenceDetails } = require('../controllers/attendanceController');
 const { getStudentGrades } = require('../controllers/gradeController');
 
-
-// ========== SEMESTER ROUTES ==========
-router.get('/current-semester', getCurrentSemester);
 
 // ========== SCHEDULE ROUTES ==========
 router.get('/:student_id/schedule', getStudentSchedule);
