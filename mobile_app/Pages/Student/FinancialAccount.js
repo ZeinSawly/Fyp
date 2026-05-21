@@ -281,11 +281,19 @@ const FinancialAccount = ({ navigation, route }) => {
       {/* HEADER */}
       <View style={styles.headerWrapper}>
         <LinearGradient colors={['#1a365d', '#2b6cb0']} style={styles.header}>
-          <View style={styles.backRow}>
-            <TouchableOpacity onPress={() => navigation.goBack()}>
-              <Ionicons name="chevron-back" size={28} color="#FFF" />
-            </TouchableOpacity>
-          </View>
+        <View style={styles.headerActionRow}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Ionicons name="chevron-back" size={28} color="#FFF" />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.historyButton}
+            onPress={() => navigation.navigate('PaymentHistory', { student })}
+          >
+            <Ionicons name="time-outline" size={16} color="#FFF" />
+            <Text style={styles.historyButtonText}>History</Text>
+          </TouchableOpacity>
+        </View>
 
           <View style={styles.titleBlock}>
             <Text style={styles.headerTitle}>Financial Account</Text>
@@ -435,7 +443,30 @@ const FinancialAccount = ({ navigation, route }) => {
 const styles = StyleSheet.create({
   headerWrapper: { borderBottomLeftRadius: 25, borderBottomRightRadius: 25, overflow: 'hidden' },
   header: { paddingTop: 52, paddingBottom: 28, paddingHorizontal: 24, minHeight: 160 },
-  backRow: { height: 40, justifyContent: 'center' },
+  headerActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    height: 40,
+  },
+  
+  historyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
+  
+  historyButtonText: {
+    color: '#FFF',
+    fontWeight: '600',
+    fontSize: 12,
+  },
   titleBlock: { marginTop: 8, alignItems: 'center' },
   headerTitle: { fontSize: 26, fontWeight: '800', color: '#fff', textAlign: 'center' },
   headerSubtitle: { marginTop: 4, fontSize: 14, color: '#e2e8f0', textAlign: 'center' },

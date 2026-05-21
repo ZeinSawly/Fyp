@@ -127,5 +127,37 @@ ALTER TABLE student_financial_transactions
   ADD COLUMN discount_amount DECIMAL(10,2) DEFAULT 0.00 AFTER amount,
   ADD COLUMN original_amount DECIMAL(10,2) DEFAULT NULL AFTER discount_amount;
 
+
+
+
+
+
+I Created the payments table that records payments the officer records:
+
+
+CREATE TABLE payments (
+  id INT NOT NULL AUTO_INCREMENT,
+  transaction_id BIGINT NOT NULL,             -- which charge this payment is for
+  student_id INT NOT NULL,                    -- denormalized for fast lookup
+  amount DECIMAL(10,2) NOT NULL,              -- how much was paid
+  payment_method ENUM('cash','card','check','bank_transfer','other') NOT NULL,
+  reference_number VARCHAR(100) DEFAULT NULL, -- check #, txn ref, receipt #
+  payment_date DATE NOT NULL,                 -- when it was paid
+  notes TEXT DEFAULT NULL,
+  recorded_by INT NOT NULL,                   -- which finance officer (user.id)
+  status ENUM('completed','reversed') NOT NULL DEFAULT 'completed',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  
+  PRIMARY KEY (id),
+  KEY idx_transaction (transaction_id),
+  KEY idx_student (student_id),
+  KEY idx_payment_date (payment_date),
+  KEY idx_recorded_by (recorded_by),
+  
+  CONSTRAINT fk_payment_transaction FOREIGN KEY (transaction_id) REFERENCES student_financial_transactions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_payment_student FOREIGN KEY (student_id) REFERENCES students(user_id),
+  CONSTRAINT fk_payment_officer FOREIGN KEY (recorded_by) REFERENCES users(id)
+);
+
   
 

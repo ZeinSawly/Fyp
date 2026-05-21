@@ -623,4 +623,238 @@ const addPayment = async (req, res) => {
     }
   };
 
-  module.exports = {addPayment, markPaymentPaid, getStudentPendingPayments, getFinanceStats, searchStudents, getStudentAccount};
+
+  const recordPayment = async (req, res) => {
+    const { 
+      transaction_id, 
+      amount, 
+      payment_method, 
+      payment_date,
+      notes 
+    } = req.body;
+  
+    // Get the officer's ID from the JWT (set by verifyToken middleware)
+    const recorded_by = req.user?.id;
+  
+    // ============================================================
+    // VALIDATION
+    // ============================================================
+    if (!transaction_id || !amount || !payment_method || !payment_date) {
+      return res.status(400).json({
+        success: false,
+        message: 'transaction_id, amount, payment_method, and payment_date are required',
+      });
+    }
+  
+    if (!recorded_by) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: cannot identify the officer recording this payment',
+      });
+    }
+  
+    const amountNum = Number(amount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount must be a positive number',
+      });
+    }
+  
+    const validMethods = ['cash', 'card', 'check', 'bank_transfer', 'other'];
+    if (!validMethods.includes(payment_method)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid payment method. Must be one of: ${validMethods.join(', ')}`,
+      });
+    }
+  
+    const connection = await db.promise().getConnection();
+  
+    try {
+      await connection.beginTransaction();
+  
+      // ============================================================
+      // 1. LOAD THE TRANSACTION (with lock)
+      // ============================================================
+      const [txRows] = await connection.query(
+        `SELECT id, student_id, parent_transaction_id, amount, amount_paid, status
+         FROM student_financial_transactions
+         WHERE id = ?
+         FOR UPDATE`,
+        [transaction_id]
+      );
+  
+      if (txRows.length === 0) {
+        await connection.rollback();
+        return res.status(404).json({
+          success: false,
+          message: 'Transaction not found',
+        });
+      }
+  
+      const tx = txRows[0];
+  
+      // Prevent paying on a parent tuition row directly (must pay individual installments)
+      const [childCheck] = await connection.query(
+        `SELECT COUNT(*) AS child_count
+         FROM student_financial_transactions
+         WHERE parent_transaction_id = ?`,
+        [transaction_id]
+      );
+  
+      if (childCheck[0].child_count > 0) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot pay on a parent transaction directly. Pay each installment individually.',
+        });
+      }
+  
+      // Prevent overpayment
+      const currentPaid = Number(tx.amount_paid || 0);
+      const totalAmount = Number(tx.amount || 0);
+      const remaining = totalAmount - currentPaid;
+  
+      if (remaining <= 0) {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message: 'This transaction is already fully paid',
+        });
+      }
+  
+      if (amountNum > remaining) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Payment amount $${amountNum.toFixed(2)} exceeds remaining balance $${remaining.toFixed(2)}`,
+        });
+      }
+  
+      // ============================================================
+      // 2. GENERATE REFERENCE NUMBER (PAY-YYYY-NNNNN)
+      // ============================================================
+      const paymentYear = new Date(payment_date).getFullYear();
+      const yearPrefix = `PAY-${paymentYear}-`;
+  
+      // Find the highest existing number for this year (with lock to prevent races)
+      const [refRows] = await connection.query(
+        `SELECT reference_number 
+         FROM payments 
+         WHERE reference_number LIKE ?
+         ORDER BY id DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [`${yearPrefix}%`]
+      );
+  
+      let nextSeq = 1;
+      if (refRows.length > 0) {
+        const lastRef = refRows[0].reference_number;
+        const lastNum = parseInt(lastRef.split('-').pop(), 10);
+        if (!isNaN(lastNum)) {
+          nextSeq = lastNum + 1;
+        }
+      }
+  
+      const padded = String(nextSeq).padStart(Math.max(5, String(nextSeq).length), '0');
+      const reference_number = `${yearPrefix}${padded}`;
+  
+      // ============================================================
+      // 3. INSERT PAYMENT
+      // ============================================================
+      const [paymentResult] = await connection.query(
+        `INSERT INTO payments 
+           (transaction_id, student_id, amount, payment_method, 
+            reference_number, payment_date, notes, recorded_by, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed')`,
+        [
+          transaction_id,
+          tx.student_id,
+          amountNum,
+          payment_method,
+          reference_number,
+          payment_date,
+          notes || null,
+          recorded_by,
+        ]
+      );
+  
+      const paymentId = paymentResult.insertId;
+  
+      // ============================================================
+      // 4. RECALCULATE TRANSACTION'S amount_paid AND STATUS
+      // ============================================================
+      const newAmountPaid = currentPaid + amountNum;
+      const newStatus = newAmountPaid >= totalAmount ? 'paid' : 'pending';
+      
+      // Use the most recent payment_date if this transaction is now paid
+      const newPaymentDate = newStatus === 'paid' ? payment_date : null;
+  
+      await connection.query(
+        `UPDATE student_financial_transactions
+         SET amount_paid = ?, 
+             status = ?,
+             payment_date = ?
+         WHERE id = ?`,
+        [newAmountPaid, newStatus, newPaymentDate, transaction_id]
+      );
+  
+      // ============================================================
+      // 5. IF THIS WAS THE LAST UNPAID INSTALLMENT, MARK PARENT AS PAID
+      // ============================================================
+      if (tx.parent_transaction_id && newStatus === 'paid') {
+        const [siblingCheck] = await connection.query(
+          `SELECT 
+             COUNT(*) AS total,
+             SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS paid_count
+           FROM student_financial_transactions
+           WHERE parent_transaction_id = ?`,
+          [tx.parent_transaction_id]
+        );
+  
+        const { total, paid_count } = siblingCheck[0];
+  
+        if (total === paid_count) {
+          // All siblings are paid → mark parent as paid too
+          await connection.query(
+            `UPDATE student_financial_transactions
+             SET status = 'paid',
+                 payment_date = ?
+             WHERE id = ?`,
+            [payment_date, tx.parent_transaction_id]
+          );
+        }
+      }
+  
+      await connection.commit();
+  
+      return res.status(201).json({
+        success: true,
+        message: 'Payment recorded successfully',
+        data: {
+          payment_id: paymentId,
+          reference_number,
+          transaction_id,
+          amount: amountNum,
+          new_amount_paid: newAmountPaid,
+          new_status: newStatus,
+          remaining_balance: totalAmount - newAmountPaid,
+        },
+      });
+  
+    } catch (error) {
+      await connection.rollback();
+      console.error('Record payment error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error',
+        error: error.message,
+      });
+    } finally {
+      connection.release();
+    }
+  };
+
+  module.exports = {addPayment, markPaymentPaid, getStudentPendingPayments, getFinanceStats, searchStudents, getStudentAccount, recordPayment};

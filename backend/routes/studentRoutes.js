@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const { getStudentSchedule } = require('../controllers/studScheduleController');
-const { getFinancialSummary, getStudentFinancialSemesters } = require('../controllers/studentFinancialController');
+const { getFinancialSummary, getStudentFinancialSemesters, getStudentPayments, getPaymentReceipt, } = require('../controllers/studentFinancialController');
 const {getCoursesForStudent, getCourseSchedule, addToCart, getStudentCart, removeCartItem, enrollCartItem, dropCourse, getEnrolledCourses, swapCourseWithCart, getEnrolledCoursesForSwap, getCartItemsForSwap, } = require('../controllers/studentCourseController');
 const { getStudentAttendance, getStudentAbsenceDetails } = require('../controllers/attendanceController');
 const { getStudentGrades } = require('../controllers/gradeController');
@@ -14,6 +14,8 @@ router.get('/:student_id/schedule', getStudentSchedule);
 // ========== FINANCIAL ROUTES ==========
 router.get('/:id/financial-summary', getFinancialSummary);
 router.get('/:id/financial-semesters', getStudentFinancialSemesters);
+router.get('/:id/payments', getStudentPayments);
+router.get('/:id/payments/:payment_id/receipt', getPaymentReceipt);
 
 // ========== COURSE ROUTES ==========
 router.get('/:student_id/courses', getCoursesForStudent);

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   Card, Row, Col, Typography, Tag, Spin, Empty, Button,
-  Descriptions, Divider, Alert, Tooltip,
+  Descriptions, Divider, Alert, Tooltip, Modal, Form, 
+  InputNumber, Select, DatePicker, Input, message,
 } from 'antd';
 import {
   ArrowLeftOutlined, UserOutlined, MailOutlined, BookOutlined,
@@ -9,9 +10,10 @@ import {
   CheckCircleOutlined, ClockCircleOutlined, WarningOutlined,
   DollarOutlined, PercentageOutlined, FileTextOutlined,
   GiftOutlined, EnvironmentOutlined, UpOutlined, DownOutlined,
-  PhoneOutlined,
+  PhoneOutlined, CreditCardOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
+import dayjs from 'dayjs';
 import FinanceLayout from '../../Components/FinanceLayout';
 import api from '../../config/api';
 
@@ -32,6 +34,11 @@ export default function StudentAccount() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expandedItems, setExpandedItems] = useState({});
+
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [paymentForm] = Form.useForm();
 
   useEffect(() => {
     fetchAccount();
@@ -86,6 +93,70 @@ export default function StudentAccount() {
   const StatusTag = ({ status }) => {
     const config = STATUS_STYLES[status] || STATUS_STYLES.pending;
     return <Tag color={config.color}>{config.label}</Tag>;
+  };
+
+  const openPaymentModal = (transaction) => {
+    setSelectedTransaction(transaction);
+    paymentForm.setFieldsValue({
+      amount: transaction.amount_remaining,
+      payment_method: 'cash',
+      payment_date: dayjs(),
+      notes: '',
+    });
+    setPaymentModalOpen(true);
+  };
+  
+  const closePaymentModal = () => {
+    setPaymentModalOpen(false);
+    setSelectedTransaction(null);
+    paymentForm.resetFields();
+  };
+  
+  const handlePaymentSubmit = async () => {
+    try {
+      const values = await paymentForm.validateFields();
+      setSubmitting(true);
+  
+      const payload = {
+        transaction_id: selectedTransaction.id,
+        amount: values.amount,
+        payment_method: values.payment_method,
+        payment_date: values.payment_date.format('YYYY-MM-DD'),
+        notes: values.notes || null,
+      };
+  
+      const res = await api.post('/api/finance/payments/record', payload);
+  
+      if (res.data.success) {
+        const { reference_number, new_status, remaining_balance } = res.data.data;
+  
+        message.success({
+          content: (
+            <span>
+              Payment recorded as <strong>{reference_number}</strong>
+              {remaining_balance > 0 && ` · ${formatCurrency(remaining_balance)} still owed`}
+            </span>
+          ),
+          duration: 4,
+        });
+  
+        closePaymentModal();
+        fetchAccount(); // refresh the account data
+      } else {
+        message.error(res.data.message || 'Failed to record payment');
+      }
+    } catch (err) {
+      if (err.errorFields) {
+        // Form validation error — handled by antd already
+        return;
+      }
+      console.error('Record payment error:', err);
+      message.error(
+        err.response?.data?.message || 'Failed to record payment'
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (loading) {
@@ -458,8 +529,21 @@ export default function StudentAccount() {
                           {isExpanded ? <UpOutlined /> : <DownOutlined />}
                         </div>
                       )}
+                      {!item.has_installments && item.status !== 'paid' && item.amount_remaining > 0 && (
+                        <Button 
+                          type="primary" 
+                          size="small"
+                          icon={<CreditCardOutlined />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openPaymentModal(item);
+                          }}
+                          style={{ marginTop: 8, background: '#276749', borderColor: '#276749' }}
+                        >
+                          Record Payment
+                        </Button>
+                      )}
                     </div>
-                  </div>
 
                   {/* Expanded installments */}
                   {item.has_installments && isExpanded && (
@@ -497,16 +581,28 @@ export default function StudentAccount() {
                               )}
                             </div>
                           </div>
-                          <div style={{ textAlign: 'right' }}>
+                          <div style={{ textAlign: 'right', minWidth: 130 }}>
                             <div style={{ fontWeight: 700, color: '#1a365d' }}>
                               {formatCurrency(inst.amount)}
                             </div>
                             <StatusTag status={inst.status} />
+                            {inst.status !== 'paid' && inst.amount_remaining > 0 && (
+                              <Button 
+                                type="primary" 
+                                size="small"
+                                icon={<CreditCardOutlined />}
+                                onClick={() => openPaymentModal(inst)}
+                                style={{ marginTop: 6, background: '#276749', borderColor: '#276749' }}
+                              >
+                                Pay
+                              </Button>
+                            )}
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
+                </div>
                 </div>
               );
             })}
@@ -514,18 +610,158 @@ export default function StudentAccount() {
         ))
       )}
 
-      {/* Footer info */}
-      <Card style={{ 
-        borderRadius: 12, border: 'none', 
-        background: '#EBF8FF', boxShadow: 'none',
-        marginTop: 8,
-      }}>
-        <Text style={{ color: '#2c5282', fontSize: 12 }}>
-          <FileTextOutlined style={{ marginRight: 6 }} />
-          Action buttons (Record Payment, Issue Charge, Award Discount) will be added in the next step.
-        </Text>
-      </Card>
+    {/* RECORD PAYMENT MODAL */}
+    <Modal
+      title={
+        <span style={{ color: '#1a365d', fontWeight: 700 }}>
+          <CreditCardOutlined style={{ marginRight: 8 }} />
+          Record Payment
+        </span>
+      }
+      open={paymentModalOpen}
+      onCancel={closePaymentModal}
+      onOk={handlePaymentSubmit}
+      okText="Confirm Payment"
+      okButtonProps={{ 
+        loading: submitting, 
+        style: { background: '#276749', borderColor: '#276749' } 
+      }}
+      width={520}
+      destroyOnClose
+    >
+      {selectedTransaction && (
+        <>
+          {/* Transaction summary box */}
+          <div style={{
+            background: '#F8FAFC',
+            borderRadius: 10,
+            padding: 14,
+            marginBottom: 20,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Text style={{ color: '#64748B', fontSize: 12 }}>Student</Text>
+              <Text strong style={{ fontSize: 12 }}>
+                {student?.name} ({student?.id})
+              </Text>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Text style={{ color: '#64748B', fontSize: 12 }}>Description</Text>
+              <Text strong style={{ fontSize: 12 }}>
+                {selectedTransaction.installment_number
+                  ? `Installment ${selectedTransaction.installment_number} of ${selectedTransaction.total_installments}`
+                  : selectedTransaction.description}
+              </Text>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Text style={{ color: '#64748B', fontSize: 12 }}>Total Amount</Text>
+              <Text strong style={{ fontSize: 12 }}>
+                {formatCurrency(selectedTransaction.amount)}
+              </Text>
+            </div>
+            {selectedTransaction.amount_paid > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text style={{ color: '#64748B', fontSize: 12 }}>Already Paid</Text>
+                <Text strong style={{ fontSize: 12, color: '#2f855a' }}>
+                  {formatCurrency(selectedTransaction.amount_paid)}
+                </Text>
+              </div>
+            )}
+            <Divider style={{ margin: '8px 0' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <Text strong style={{ color: '#c53030', fontSize: 13 }}>Remaining Balance</Text>
+              <Text strong style={{ color: '#c53030', fontSize: 15 }}>
+                {formatCurrency(selectedTransaction.amount_remaining)}
+              </Text>
+            </div>
+          </div>
 
+          {/* Payment form */}
+          <Form
+            form={paymentForm}
+            layout="vertical"
+            requiredMark={false}
+          >
+            <Form.Item
+              name="amount"
+              label="Amount Paid"
+              rules={[
+                { required: true, message: 'Please enter an amount' },
+                { 
+                  validator: (_, value) => {
+                    if (value <= 0) return Promise.reject('Amount must be positive');
+                    if (value > selectedTransaction.amount_remaining) {
+                      return Promise.reject(
+                        `Cannot exceed remaining balance (${formatCurrency(selectedTransaction.amount_remaining)})`
+                      );
+                    }
+                    return Promise.resolve();
+                  }
+                }
+              ]}
+            >
+              <InputNumber
+                style={{ width: '100%' }}
+                min={0.01}
+                max={selectedTransaction.amount_remaining}
+                step={0.01}
+                precision={2}
+                prefix="$"
+                size="large"
+                placeholder="0.00"
+              />
+            </Form.Item>
+
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item
+                  name="payment_method"
+                  label="Payment Method"
+                  rules={[{ required: true, message: 'Required' }]}
+                >
+                  <Select size="large">
+                    <Select.Option value="cash">Cash</Select.Option>
+                    <Select.Option value="card">Card</Select.Option>
+                    <Select.Option value="check">Check</Select.Option>
+                    <Select.Option value="bank_transfer">Bank Transfer</Select.Option>
+                    <Select.Option value="other">Other</Select.Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  name="payment_date"
+                  label="Payment Date"
+                  rules={[{ required: true, message: 'Required' }]}
+                >
+                  <DatePicker 
+                    style={{ width: '100%' }} 
+                    size="large"
+                    disabledDate={(current) => current && current > dayjs().endOf('day')}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Form.Item
+              name="notes"
+              label="Notes (optional)"
+            >
+              <Input.TextArea 
+                rows={2} 
+                placeholder="e.g., Check #1234, transaction reference, etc."
+              />
+            </Form.Item>
+
+            <Alert
+              message="A unique reference number will be generated automatically"
+              type="info"
+              showIcon
+              style={{ marginTop: 8 }}
+            />
+          </Form>
+        </>
+      )}
+    </Modal>
     </FinanceLayout>
   );
 }

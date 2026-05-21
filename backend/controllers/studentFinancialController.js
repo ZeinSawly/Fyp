@@ -247,4 +247,173 @@ const getStudentFinancialSemesters = async (req, res) => {
   }
 };
 
-module.exports = { getFinancialSummary, getStudentFinancialSemesters };
+// GET /api/students/:id/payments
+// Returns all payments made by this student
+const getStudentPayments = async (req, res) => {
+  const studentId = req.params.id;
+
+  if (!studentId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Student ID is required',
+    });
+  }
+
+  try {
+    const [payments] = await db.promise().query(
+      `SELECT 
+          p.id,
+          p.reference_number,
+          p.amount,
+          p.payment_method,
+          p.payment_date,
+          p.notes,
+          p.status,
+          p.created_at,
+          
+          -- Transaction context
+          t.id AS transaction_id,
+          t.description AS transaction_description,
+          t.type AS transaction_type,
+          t.installment_number,
+          t.total_installments,
+          t.amount AS transaction_amount,
+          
+          -- Semester context
+          sem.name AS semester_name,
+          sem.term AS semester_term,
+          sem.academic_year,
+          
+          -- Officer info
+          u.name AS recorded_by_name
+          
+       FROM payments p
+       JOIN student_financial_transactions t ON p.transaction_id = t.id
+       LEFT JOIN semesters sem ON t.semester_id = sem.id
+       LEFT JOIN users u ON p.recorded_by = u.id
+       WHERE p.student_id = ?
+         AND p.status = 'completed'
+       ORDER BY p.payment_date DESC, p.id DESC`,
+      [studentId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: payments,
+      count: payments.length,
+    });
+  } catch (error) {
+    console.error('Get student payments error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Database error',
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/students/:id/payments/:payment_id/receipt
+// Returns receipt data for a specific payment (with student info bundled)
+const getPaymentReceipt = async (req, res) => {
+  const { id: studentId, payment_id } = req.params;
+
+  if (!studentId || !payment_id) {
+    return res.status(400).json({
+      success: false,
+      message: 'Student ID and payment ID are required',
+    });
+  }
+
+  try {
+    const [rows] = await db.promise().query(
+      `SELECT 
+          -- Payment info
+          p.id AS payment_id,
+          p.reference_number,
+          p.amount AS payment_amount,
+          p.payment_method,
+          p.payment_date,
+          p.notes,
+          p.created_at AS recorded_at,
+          
+          -- Transaction info
+          t.id AS transaction_id,
+          t.description AS transaction_description,
+          t.type AS transaction_type,
+          t.installment_number,
+          t.total_installments,
+          t.amount AS transaction_total,
+          t.amount_paid AS transaction_paid_to_date,
+          t.original_amount,
+          t.discount_amount,
+          
+          -- Semester info
+          sem.name AS semester_name,
+          sem.term AS semester_term,
+          sem.academic_year,
+          
+          -- Student info
+          u.id AS student_id,
+          u.name AS student_name,
+          u.email AS student_email,
+          m.name AS major_name,
+          d.name AS department_name,
+          
+          -- Officer info
+          officer.name AS recorded_by_name
+          
+       FROM payments p
+       JOIN student_financial_transactions t ON p.transaction_id = t.id
+       JOIN users u ON p.student_id = u.id
+       JOIN students s ON s.user_id = u.id
+       LEFT JOIN majors m ON s.major_id = m.id
+       LEFT JOIN departments d ON m.department_id = d.id
+       LEFT JOIN semesters sem ON t.semester_id = sem.id
+       LEFT JOIN users officer ON p.recorded_by = officer.id
+       WHERE p.id = ? AND p.student_id = ?`,
+      [payment_id, studentId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Receipt not found',
+      });
+    }
+
+    const receipt = rows[0];
+
+    // Compute "previous payments" before this one
+    const [[priorPayments]] = await db.promise().query(
+      `SELECT COALESCE(SUM(amount), 0) AS prior_paid
+       FROM payments
+       WHERE transaction_id = ?
+         AND status = 'completed'
+         AND id < ?`,
+      [receipt.transaction_id, payment_id]
+    );
+
+    // Calculate balance after this payment
+    const totalPaidIncludingThis = Number(priorPayments.prior_paid) + Number(receipt.payment_amount);
+    const balanceAfter = Number(receipt.transaction_total) - totalPaidIncludingThis;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...receipt,
+        prior_paid: Number(priorPayments.prior_paid),
+        total_paid_after_this: totalPaidIncludingThis,
+        balance_after: balanceAfter < 0 ? 0 : balanceAfter,
+      },
+    });
+  } catch (error) {
+    console.error('Get payment receipt error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Database error',
+      error: error.message,
+    });
+  }
+};
+
+module.exports = { getFinancialSummary, getStudentFinancialSemesters, getStudentPayments, getPaymentReceipt };

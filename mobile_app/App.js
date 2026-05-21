@@ -20,6 +20,7 @@ import StudentSchedule from './Pages/Student/StudentSchedule';
 import StudentProfile from './Pages/Student/StudentProfile';
 import LandingScreen from './Pages/LandingPage';
 import FinancialAccount from './Pages/Student/FinancialAccount';
+import PaymentHistory from './Pages/Student/PaymentHistory';
 import StudentCourses from './Pages/Student/StudentCourses';
 import CourseDetails from './Pages/Student/CourseDetails';
 import ShoppingCart from './Pages/Student/ShoppingCart';
@@ -101,6 +102,7 @@ export default function App() {
         <Stack.Screen name="StudentProfile" component={StudentProfile} />
         <Stack.Screen name="StudentCourses" component={StudentCourses} />
         <Stack.Screen name="FinancialAccount" component={FinancialAccount} />
+        <Stack.Screen name="PaymentHistory" component={PaymentHistory} />
         <Stack.Screen name="CourseDetails" component={CourseDetails} />
         <Stack.Screen name="ShoppingCart" component={ShoppingCart} />
         <Stack.Screen name="ManageClasses" component={ManageClasses} />
