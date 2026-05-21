@@ -29,33 +29,151 @@ const getAllMajors = async (req, res) => {
 };
 
 // ─── ADD COURSE ───
+// ─── ADD COURSE (with prerequisites) ───
 const addCourse = async (req, res) => {
-  const { id, name, description, credits, type, major_id } = req.body;
+  const { id, name, description, credits, type, major_id, prerequisite_ids } = req.body;
 
   if (!id || !name || !credits || !type || !major_id) {
     return res.status(400).json({ message: 'ID, name, credits, type and major are required' });
   }
 
+  // prerequisite_ids should be an array (or undefined for no prereqs)
+  const prereqs = Array.isArray(prerequisite_ids) ? prerequisite_ids : [];
+
+  const connection = await db.promise().getConnection();
+
   try {
-    // Check if course already exists
-    const [existing] = await db.promise().query(
-      `SELECT id FROM courses WHERE id = ?`, [id]
+    await connection.beginTransaction();
+
+    // 1. Check if course already exists
+    const [existing] = await connection.query(
+      `SELECT id FROM courses WHERE id = ?`,
+      [id]
     );
 
     if (existing.length > 0) {
+      await connection.rollback();
       return res.status(400).json({ message: 'A course with this ID already exists' });
     }
 
-    await db.promise().query(
-      `INSERT INTO courses (id, name, description, credits, major_id, type) VALUES (?, ?, ?, ?, ?, ?)`,
+    // 2. If prereqs given, validate they all exist AND aren't self-referencing
+    if (prereqs.length > 0) {
+      // Prevent self-prereq (a course can't be its own prerequisite)
+      if (prereqs.includes(id)) {
+        await connection.rollback();
+        return res.status(400).json({ 
+          message: 'A course cannot be its own prerequisite' 
+        });
+      }
+
+      // Verify all prereq IDs actually exist
+      const [foundPrereqs] = await connection.query(
+        `SELECT id FROM courses WHERE id IN (?)`,
+        [prereqs]
+      );
+
+      if (foundPrereqs.length !== prereqs.length) {
+        const foundIds = foundPrereqs.map(p => p.id);
+        const missingIds = prereqs.filter(pid => !foundIds.includes(pid));
+        await connection.rollback();
+        return res.status(400).json({ 
+          message: `Prerequisite course(s) not found: ${missingIds.join(', ')}` 
+        });
+      }
+    }
+
+    // 3. Insert the course
+    await connection.query(
+      `INSERT INTO courses (id, name, description, credits, major_id, type) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
       [id, name, description || null, credits, major_id, type]
     );
 
-    return res.status(201).json({ message: 'Course added successfully' });
+    // 4. Insert prerequisites
+    if (prereqs.length > 0) {
+      const prereqValues = prereqs.map(prereqId => [id, prereqId]);
+      await connection.query(
+        `INSERT INTO course_prerequisites (course_id, prerequisite_id) VALUES ?`,
+        [prereqValues]
+      );
+    }
+
+    await connection.commit();
+
+    return res.status(201).json({ 
+      message: 'Course added successfully',
+      prerequisites_added: prereqs.length,
+    });
 
   } catch (error) {
+    await connection.rollback();
     console.error('Add course error:', error);
     return res.status(500).json({ message: 'Server error', error: error.message });
+  } finally {
+    connection.release();
+  }
+};
+
+// ─── GET AVAILABLE PREREQUISITES ───
+// Returns courses that can be used as prerequisites
+// Optionally filtered by major_id (frontend uses this)
+// Also optionally excludes a specific course (when editing, to prevent self-prereq)
+const getAvailablePrerequisites = async (req, res) => {
+  const { major_id, exclude_course_id } = req.query;
+
+  try {
+    let query = `
+      SELECT c.id, c.name, c.credits, c.type, m.name AS major_name
+      FROM courses c
+      LEFT JOIN majors m ON c.major_id = m.id
+      WHERE 1 = 1
+    `;
+    const params = [];
+
+    if (major_id) {
+      query += ` AND c.major_id = ?`;
+      params.push(major_id);
+    }
+
+    if (exclude_course_id) {
+      query += ` AND c.id != ?`;
+      params.push(exclude_course_id);
+    }
+
+    query += ` ORDER BY c.id ASC`;
+
+    const [courses] = await db.promise().query(query, params);
+    return res.status(200).json({ success: true, data: courses });
+  } catch (error) {
+    console.error('Get available prerequisites error:', error);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// ─── GET COURSE PREREQUISITES ───
+const getCoursePrerequisites = async (req, res) => {
+  const { course_id } = req.params;
+
+  try {
+    const [prereqs] = await db.promise().query(
+      `SELECT 
+          cp.prerequisite_id AS id,
+          c.name,
+          c.credits,
+          c.type,
+          m.name AS major_name
+       FROM course_prerequisites cp
+       JOIN courses c ON cp.prerequisite_id = c.id
+       LEFT JOIN majors m ON c.major_id = m.id
+       WHERE cp.course_id = ?
+       ORDER BY c.id ASC`,
+      [course_id]
+    );
+
+    return res.status(200).json({ success: true, data: prereqs });
+  } catch (error) {
+    console.error('Get course prerequisites error:', error);
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
@@ -298,5 +416,6 @@ module.exports = {
   getCourseSections, addCourseSection,
   getAllInstructors,
   addCourseSchedule, getSectionSchedule,
-  getAllMajors, getCoursesBySemester
+  getAllMajors, getCoursesBySemester,
+  getAvailablePrerequisites, getCoursePrerequisites
 };

@@ -27,8 +27,12 @@ export default function CourseManagement() {
   const [courses, setCourses] = useState([]);
   const [coursesLoading, setCoursesLoading] = useState(true);
   const [addingCourse, setAddingCourse] = useState(false);
-  const [majors, setMajors] = useState([]);  // Add this state
+  const [majors, setMajors] = useState([]); 
   const [majorsLoading, setMajorsLoading] = useState(false);
+  // Prerequisites state (for the Add Course form)
+  const [availablePrereqs, setAvailablePrereqs] = useState([]);
+  const [prereqsLoading, setPrereqsLoading] = useState(false);
+  const [selectedMajorForCourse, setSelectedMajorForCourse] = useState(null);
   const [selectedMajorFilter, setSelectedMajorFilter] = useState(null);
   const [filteredCourses, setFilteredCourses] = useState([]);
 
@@ -50,6 +54,7 @@ export default function CourseManagement() {
   const [schedule, setSchedule] = useState([]);
   const [addingSchedule, setAddingSchedule] = useState(false);
   const [scheduleLoading, setScheduleLoading] = useState(false);
+  
 
   // Alerts
   const [success, setSuccess] = useState('');
@@ -153,30 +158,46 @@ export default function CourseManagement() {
       }
   };
 
-  const filterCoursesByMajor = (majorId) => {
+  const fetchAvailablePrereqs = async (majorId) => {
     if (!majorId) {
-      setFilteredCourses(courses);
-    } else {
-      const filtered = courses.filter(course => course.major_id === majorId);
-      setFilteredCourses(filtered);
+      setAvailablePrereqs([]);
+      return;
+    }
+    setPrereqsLoading(true);
+    try {
+      const res = await api.get(`/api/admin/courses/prerequisites/available?major_id=${majorId}`);
+      if (res.data.success) {
+        setAvailablePrereqs(res.data.data);
+      }
+    } catch (err) {
+      console.error('Failed to load prerequisites:', err);
+    } finally {
+      setPrereqsLoading(false);
     }
   };
 
   // ─── HANDLERS ───
   const handleAddCourse = async (values) => {
     setAddingCourse(true);
-    setError(''); setSuccess('');
+    setError(''); 
+    setSuccess('');
     try {
-      await api.post('/api/admin/courses/add', {
+      const res = await api.post('/api/admin/courses/add', {
         id: values.id.toUpperCase(),
         name: values.name,
         description: values.description,
         credits: values.credits,
         type: values.type,
         major_id: values.major_id,
+        prerequisite_ids: values.prerequisite_ids || [],  // ← new
       });
-      setSuccess(`Course "${values.name}" added successfully.`);
+      const prereqCount = res.data.prerequisites_added || 0;
+      setSuccess(
+        `Course "${values.name}" added successfully${prereqCount > 0 ? ` with ${prereqCount} prerequisite${prereqCount === 1 ? '' : 's'}` : ''}.`
+      );
       courseForm.resetFields();
+      setSelectedMajorForCourse(null);
+      setAvailablePrereqs([]);
       fetchCourses();
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to add course.');
@@ -358,13 +379,52 @@ export default function CourseManagement() {
                     filterOption={(input, option) =>
                       option?.children?.toLowerCase().includes(input.toLowerCase())
                     }
+                    onChange={(value) => {
+                      setSelectedMajorForCourse(value);
+                      fetchAvailablePrereqs(value);
+                      // Clear any previously selected prereqs when major changes
+                      courseForm.setFieldValue('prerequisite_ids', []);
+                    }}
                   >
                     {majors.map(m => (
                       <Option key={m.id} value={m.id}>{m.name}</Option>
                     ))}
                   </Select>
                 </Form.Item>
-    
+
+                {/* Prerequisites — appears after major is chosen */}
+                <Form.Item
+                  label={
+                    <span style={{ fontWeight: 600, color: '#374151' }}>
+                      Prerequisites <Text type="secondary" style={{ fontWeight: 400, fontSize: 12 }}>(optional)</Text>
+                    </span>
+                  }
+                  name="prerequisite_ids"
+                  extra={
+                    !selectedMajorForCourse
+                      ? 'Select a major first to see available prerequisite courses'
+                      : availablePrereqs.length === 0
+                        ? 'No existing courses in this major to use as prerequisites'
+                        : null
+                  }
+                >
+                  <Select
+                    mode="multiple"
+                    size="large"
+                    style={{ borderRadius: 10 }}
+                    placeholder="Select prerequisite courses (if any)"
+                    disabled={!selectedMajorForCourse || availablePrereqs.length === 0}
+                    loading={prereqsLoading}
+                    showSearch
+                    optionFilterProp="label"
+                    maxTagCount="responsive"
+                    options={availablePrereqs.map(c => ({
+                      label: `${c.id} — ${c.name}`,
+                      value: c.id,
+                    }))}
+                  />
+                </Form.Item>
+
                 <Form.Item
                   label={<Text style={{ fontWeight: 600, color: '#374151' }}>Description</Text>}
                   name="description"

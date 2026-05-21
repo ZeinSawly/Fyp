@@ -31,6 +31,8 @@ const {
     getSectionSchedule, 
     getAllMajors,
     getCoursesBySemester,
+    getAvailablePrerequisites,
+    getCoursePrerequisites,
 } = require('../controllers/courseController');
 
 const {
@@ -79,6 +81,11 @@ router.get('/majors-list', getAllMajors);
 // Course Catalog
 router.get('/courses', getAllCourses);
 router.post('/courses/add', addCourse);
+// ============================================
+// PREREQUISITES
+// ============================================
+router.get('/courses/prerequisites/available', getAvailablePrerequisites);
+router.get('/courses/:course_id/prerequisites', getCoursePrerequisites);
 
 // Courses by semester (for student enrollment)
 router.get('/courses/by-semester', getCoursesBySemester);
