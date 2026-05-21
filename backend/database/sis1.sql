@@ -64,7 +64,7 @@ CREATE TABLE `course_enrollments` (
   `id` int NOT NULL AUTO_INCREMENT,
   `student_id` int NOT NULL,
   `section_id` int NOT NULL,
-  `enrolled_at` date NOT NULL,
+  `enrolled_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `semester_id` int DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_enrollment` (`student_id`,`section_id`),
@@ -73,7 +73,7 @@ CREATE TABLE `course_enrollments` (
   CONSTRAINT `course_enrollments_ibfk_1` FOREIGN KEY (`student_id`) REFERENCES `students` (`user_id`) ON DELETE CASCADE,
   CONSTRAINT `course_enrollments_ibfk_2` FOREIGN KEY (`section_id`) REFERENCES `course_sections` (`id`) ON DELETE CASCADE,
   CONSTRAINT `course_enrollments_ibfk_3` FOREIGN KEY (`semester_id`) REFERENCES `semesters` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=12 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=18 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -82,6 +82,7 @@ CREATE TABLE `course_enrollments` (
 
 LOCK TABLES `course_enrollments` WRITE;
 /*!40000 ALTER TABLE `course_enrollments` DISABLE KEYS */;
+INSERT INTO `course_enrollments` VALUES (16,202311094,2,'2026-05-21 12:41:42',1);
 /*!40000 ALTER TABLE `course_enrollments` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -173,7 +174,7 @@ CREATE TABLE `course_sections` (
 
 LOCK TABLES `course_sections` WRITE;
 /*!40000 ALTER TABLE `course_sections` DISABLE KEYS */;
-INSERT INTO `course_sections` VALUES (2,'PROG 121-EC01','4775',201412345,30,30,NULL),(3,'PROG 121-EC01','4776',NULL,24,25,NULL),(4,'COMM 120-CM01','1000',NULL,25,25,1);
+INSERT INTO `course_sections` VALUES (2,'PROG 121-EC01','4775',201412345,29,30,1),(3,'PROG 121-EC01','4776',NULL,25,25,1),(4,'COMM 120-CM01','1000',NULL,24,25,1);
 /*!40000 ALTER TABLE `course_sections` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -191,7 +192,6 @@ CREATE TABLE `courses` (
   `credits` int NOT NULL,
   `major_id` int NOT NULL,
   `type` enum('major','elective') NOT NULL,
-  `offered_in` enum('Fall','Spring','Both') DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `fk_courses_major` (`major_id`),
   CONSTRAINT `fk_courses_major` FOREIGN KEY (`major_id`) REFERENCES `majors` (`id`) ON DELETE CASCADE
@@ -204,8 +204,39 @@ CREATE TABLE `courses` (
 
 LOCK TABLES `courses` WRITE;
 /*!40000 ALTER TABLE `courses` DISABLE KEYS */;
-INSERT INTO `courses` VALUES ('COMM 120-CM01','Citizenship ','Testttt',3,1,'elective',NULL),('NETW 228-EC00','Computer Networks','Everything related to computer networks',3,1,'major',NULL),('PROG 121-EC01','Programming I','This course involves structural programming using the C/C++ language. This course will allow the student to acquire basic knowledge in structural programming. This course explains variables, basic operators, selection, repititions, arrays, functions and procedures.',3,1,'major',NULL),('PROG 121-EP01','Lab Programming I','This Lab aims to familiarize the student with the programming environment. The student will have exercises to write using a programming language.',1,1,'major',NULL);
+INSERT INTO `courses` VALUES ('COMM 120-CM01','Citizenship ','Testttt',3,1,'elective'),('NETW 228-EC00','Computer Networks','Everything related to computer networks',3,1,'major'),('PROG 121-EC01','Programming I','This course involves structural programming using the C/C++ language. This course will allow the student to acquire basic knowledge in structural programming. This course explains variables, basic operators, selection, repititions, arrays, functions and procedures.',3,1,'major'),('PROG 121-EP01','Lab Programming I','This Lab aims to familiarize the student with the programming environment. The student will have exercises to write using a programming language.',1,1,'major');
 /*!40000 ALTER TABLE `courses` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `credit_pricing`
+--
+
+DROP TABLE IF EXISTS `credit_pricing`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `credit_pricing` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `major_id` int NOT NULL,
+  `price_per_credit` decimal(10,2) NOT NULL,
+  `effective_from` date NOT NULL,
+  `effective_until` date DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_major` (`major_id`),
+  KEY `idx_effective` (`effective_from`,`effective_until`),
+  CONSTRAINT `fk_pricing_major` FOREIGN KEY (`major_id`) REFERENCES `majors` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `credit_pricing`
+--
+
+LOCK TABLES `credit_pricing` WRITE;
+/*!40000 ALTER TABLE `credit_pricing` DISABLE KEYS */;
+INSERT INTO `credit_pricing` VALUES (1,1,220.00,'2025-09-01',NULL,'2026-05-20 15:33:36');
+/*!40000 ALTER TABLE `credit_pricing` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -234,6 +265,100 @@ LOCK TABLES `departments` WRITE;
 /*!40000 ALTER TABLE `departments` DISABLE KEYS */;
 INSERT INTO `departments` VALUES (1,'Technology','Building D','Office D1.1','01-555-444','uatech@ua.edu.lb'),(2,'Engineering','Building D','Office D1.2','01-555-666','uaeng@ua.edu.lb');
 /*!40000 ALTER TABLE `departments` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `discount_types`
+--
+
+DROP TABLE IF EXISTS `discount_types`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `discount_types` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `code` varchar(30) NOT NULL,
+  `name` varchar(100) NOT NULL,
+  `description` text,
+  `scope` enum('semester','academic_year') NOT NULL,
+  `calculation` enum('percentage','fixed_amount') NOT NULL,
+  `applies_to` enum('tuition_only','tuition_and_fees','specific_fee') NOT NULL DEFAULT 'tuition_only',
+  `is_active` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `code` (`code`)
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `discount_types`
+--
+
+LOCK TABLES `discount_types` WRITE;
+/*!40000 ALTER TABLE `discount_types` DISABLE KEYS */;
+INSERT INTO `discount_types` VALUES (1,'GPA_SCHOLARSHIP','GPA-Based Scholarship','Awarded based on previous semester GPA','semester','percentage','tuition_only',1,'2026-05-20 15:39:29'),(2,'FINANCIAL_AID','Need-Based Financial Aid','Annual financial aid','academic_year','percentage','tuition_only',1,'2026-05-20 15:39:29'),(3,'MERIT_AWARD','Merit Award','Awarded to top-performing students','semester','percentage','tuition_only',1,'2026-05-20 15:39:29'),(4,'SIBLING_DISCOUNT','Sibling Discount','For students with siblings enrolled','academic_year','percentage','tuition_only',1,'2026-05-20 15:39:29'),(5,'STAFF_DEPENDENT','Staff Dependent Discount','For children of university staff','academic_year','percentage','tuition_and_fees',1,'2026-05-20 15:39:29');
+/*!40000 ALTER TABLE `discount_types` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `fee_pricing`
+--
+
+DROP TABLE IF EXISTS `fee_pricing`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `fee_pricing` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `fee_type_id` int NOT NULL,
+  `major_id` int DEFAULT NULL,
+  `amount` decimal(10,2) NOT NULL,
+  `effective_from` date NOT NULL,
+  `effective_until` date DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_fee_type` (`fee_type_id`),
+  KEY `idx_major` (`major_id`),
+  CONSTRAINT `fk_fee_pricing_major` FOREIGN KEY (`major_id`) REFERENCES `majors` (`id`),
+  CONSTRAINT `fk_fee_pricing_type` FOREIGN KEY (`fee_type_id`) REFERENCES `fee_types` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `fee_pricing`
+--
+
+LOCK TABLES `fee_pricing` WRITE;
+/*!40000 ALTER TABLE `fee_pricing` DISABLE KEYS */;
+INSERT INTO `fee_pricing` VALUES (1,1,NULL,250.00,'2025-09-01',NULL,'2026-05-20 15:33:39');
+/*!40000 ALTER TABLE `fee_pricing` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `fee_types`
+--
+
+DROP TABLE IF EXISTS `fee_types`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `fee_types` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `code` varchar(30) NOT NULL,
+  `name` varchar(100) NOT NULL,
+  `description` text,
+  `charge_basis` enum('per_semester','per_year','one_time','on_demand') NOT NULL,
+  `is_active` tinyint(1) DEFAULT '1',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `code` (`code`)
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `fee_types`
+--
+
+LOCK TABLES `fee_types` WRITE;
+/*!40000 ALTER TABLE `fee_types` DISABLE KEYS */;
+INSERT INTO `fee_types` VALUES (1,'REGISTRATION','Registration Fee','Charged each semester upon registration','per_semester',1),(2,'INSURANCE','Student Insurance','Health insurance per semester','per_year',1),(3,'LOST_ID','Replacement ID Card','Fee for replacing a lost ID','on_demand',1),(4,'LATE_PAYMENT','Late Payment Penalty','Charged for installments paid after due date','on_demand',1);
+/*!40000 ALTER TABLE `fee_types` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -342,6 +467,45 @@ LOCK TABLES `majors` WRITE;
 /*!40000 ALTER TABLE `majors` DISABLE KEYS */;
 INSERT INTO `majors` VALUES (1,1,'Computer Science','Bachelor',96),(2,2,'Computer and Communication Engineering','Bachelor',156);
 /*!40000 ALTER TABLE `majors` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `payments`
+--
+
+DROP TABLE IF EXISTS `payments`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `payments` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `transaction_id` bigint NOT NULL,
+  `student_id` int NOT NULL,
+  `amount` decimal(10,2) NOT NULL,
+  `payment_method` enum('cash','card','check','bank_transfer','other') NOT NULL,
+  `reference_number` varchar(100) DEFAULT NULL,
+  `payment_date` date NOT NULL,
+  `notes` text,
+  `recorded_by` int NOT NULL,
+  `status` enum('completed','reversed') NOT NULL DEFAULT 'completed',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_transaction` (`transaction_id`),
+  KEY `idx_student` (`student_id`),
+  KEY `idx_payment_date` (`payment_date`),
+  KEY `idx_recorded_by` (`recorded_by`),
+  CONSTRAINT `fk_payment_officer` FOREIGN KEY (`recorded_by`) REFERENCES `users` (`id`),
+  CONSTRAINT `fk_payment_student` FOREIGN KEY (`student_id`) REFERENCES `students` (`user_id`),
+  CONSTRAINT `fk_payment_transaction` FOREIGN KEY (`transaction_id`) REFERENCES `student_financial_transactions` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `payments`
+--
+
+LOCK TABLES `payments` WRITE;
+/*!40000 ALTER TABLE `payments` DISABLE KEYS */;
+/*!40000 ALTER TABLE `payments` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -502,7 +666,7 @@ CREATE TABLE `shopping_cart` (
   CONSTRAINT `cart_ibfk_1` FOREIGN KEY (`student_id`) REFERENCES `students` (`user_id`) ON DELETE CASCADE,
   CONSTRAINT `cart_ibfk_2` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_section` FOREIGN KEY (`section_id`) REFERENCES `course_sections` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=35 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=39 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -511,8 +675,94 @@ CREATE TABLE `shopping_cart` (
 
 LOCK TABLES `shopping_cart` WRITE;
 /*!40000 ALTER TABLE `shopping_cart` DISABLE KEYS */;
-INSERT INTO `shopping_cart` VALUES (33,202311094,'PROG 121-EC01',2,'2026-05-19 19:15:28'),(34,202311094,'COMM 120-CM01',4,'2026-05-19 22:19:18');
 /*!40000 ALTER TABLE `shopping_cart` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `student_course_completions`
+--
+
+DROP TABLE IF EXISTS `student_course_completions`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `student_course_completions` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `student_id` int NOT NULL,
+  `course_id` varchar(30) NOT NULL,
+  `section_id` int NOT NULL,
+  `semester_id` int NOT NULL,
+  `final_grade` decimal(5,2) DEFAULT NULL,
+  `letter_grade` varchar(3) DEFAULT NULL,
+  `grade_points` decimal(3,2) DEFAULT NULL,
+  `credits_earned` int NOT NULL DEFAULT '0',
+  `status` enum('in_progress','passed','failed','withdrawn','incomplete') NOT NULL DEFAULT 'in_progress',
+  `completed_at` date DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_student_section` (`student_id`,`section_id`),
+  KEY `idx_student` (`student_id`),
+  KEY `idx_course` (`course_id`),
+  KEY `idx_semester` (`semester_id`),
+  KEY `idx_status` (`status`),
+  KEY `fk_completion_section` (`section_id`),
+  CONSTRAINT `fk_completion_course` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`),
+  CONSTRAINT `fk_completion_section` FOREIGN KEY (`section_id`) REFERENCES `course_sections` (`id`),
+  CONSTRAINT `fk_completion_semester` FOREIGN KEY (`semester_id`) REFERENCES `semesters` (`id`),
+  CONSTRAINT `fk_completion_student` FOREIGN KEY (`student_id`) REFERENCES `students` (`user_id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `student_course_completions`
+--
+
+LOCK TABLES `student_course_completions` WRITE;
+/*!40000 ALTER TABLE `student_course_completions` DISABLE KEYS */;
+INSERT INTO `student_course_completions` VALUES (2,202311094,'PROG 121-EC01',2,1,NULL,NULL,NULL,0,'in_progress',NULL,'2026-05-21 09:41:42','2026-05-21 09:41:42'),(3,202311094,'COMM 120-CM01',4,1,NULL,NULL,NULL,0,'in_progress',NULL,'2026-05-21 16:58:43','2026-05-21 16:58:43');
+/*!40000 ALTER TABLE `student_course_completions` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `student_discounts`
+--
+
+DROP TABLE IF EXISTS `student_discounts`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `student_discounts` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `student_id` int NOT NULL,
+  `discount_type_id` int NOT NULL,
+  `percentage` decimal(5,2) DEFAULT NULL,
+  `fixed_amount` decimal(10,2) DEFAULT NULL,
+  `semester_id` int DEFAULT NULL,
+  `academic_year` varchar(20) DEFAULT NULL,
+  `reason` text,
+  `approved_by` int NOT NULL,
+  `status` enum('active','cancelled','expired') NOT NULL DEFAULT 'active',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_student` (`student_id`),
+  KEY `idx_semester` (`semester_id`),
+  KEY `idx_academic_year` (`academic_year`),
+  KEY `fk_discount_type` (`discount_type_id`),
+  KEY `fk_discount_approver` (`approved_by`),
+  CONSTRAINT `fk_discount_approver` FOREIGN KEY (`approved_by`) REFERENCES `users` (`id`),
+  CONSTRAINT `fk_discount_semester` FOREIGN KEY (`semester_id`) REFERENCES `semesters` (`id`),
+  CONSTRAINT `fk_discount_student` FOREIGN KEY (`student_id`) REFERENCES `students` (`user_id`),
+  CONSTRAINT `fk_discount_type` FOREIGN KEY (`discount_type_id`) REFERENCES `discount_types` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `student_discounts`
+--
+
+LOCK TABLES `student_discounts` WRITE;
+/*!40000 ALTER TABLE `student_discounts` DISABLE KEYS */;
+/*!40000 ALTER TABLE `student_discounts` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -525,11 +775,17 @@ DROP TABLE IF EXISTS `student_financial_transactions`;
 CREATE TABLE `student_financial_transactions` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `student_id` int NOT NULL,
+  `semester_id` int DEFAULT NULL,
   `payment_id` bigint DEFAULT NULL,
+  `parent_transaction_id` bigint DEFAULT NULL,
+  `installment_number` tinyint DEFAULT NULL,
+  `total_installments` tinyint DEFAULT NULL,
   `type` varchar(50) DEFAULT NULL,
   `description` varchar(255) DEFAULT NULL,
   `due_date` date DEFAULT NULL,
   `amount` decimal(10,2) DEFAULT NULL,
+  `discount_amount` decimal(10,2) DEFAULT '0.00',
+  `original_amount` decimal(10,2) DEFAULT NULL,
   `amount_paid` decimal(10,2) DEFAULT '0.00',
   `status` varchar(50) DEFAULT NULL,
   `payment_date` date DEFAULT NULL,
@@ -538,8 +794,12 @@ CREATE TABLE `student_financial_transactions` (
   PRIMARY KEY (`id`),
   KEY `student_id` (`student_id`),
   KEY `payment_id` (`payment_id`),
+  KEY `fk_trans_semester` (`semester_id`),
+  KEY `fk_trans_parent` (`parent_transaction_id`),
+  CONSTRAINT `fk_trans_parent` FOREIGN KEY (`parent_transaction_id`) REFERENCES `student_financial_transactions` (`id`),
+  CONSTRAINT `fk_trans_semester` FOREIGN KEY (`semester_id`) REFERENCES `semesters` (`id`),
   CONSTRAINT `student_financial_transactions_ibfk_1` FOREIGN KEY (`student_id`) REFERENCES `students` (`user_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=23 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -548,7 +808,7 @@ CREATE TABLE `student_financial_transactions` (
 
 LOCK TABLES `student_financial_transactions` WRITE;
 /*!40000 ALTER TABLE `student_financial_transactions` DISABLE KEYS */;
-INSERT INTO `student_financial_transactions` VALUES (3,202311094,3,'registration','Spring Semester 2025-2026','2026-05-12',250.00,0.00,'pending',NULL,'2026-05-07 11:22:39','2026-05-07 11:22:39');
+INSERT INTO `student_financial_transactions` VALUES (17,202311094,1,NULL,NULL,NULL,4,'tuition','Spring 2026 Tuition',NULL,660.00,0.00,660.00,0.00,'pending',NULL,'2026-05-21 16:48:43','2026-05-21 16:48:43'),(18,202311094,1,NULL,17,1,4,'tuition_installment','Tuition Installment 1 of 4','2026-02-04',165.00,0.00,NULL,0.00,'pending',NULL,'2026-05-21 16:48:43','2026-05-21 16:48:43'),(19,202311094,1,NULL,17,2,4,'tuition_installment','Tuition Installment 2 of 4','2026-02-25',165.00,0.00,NULL,0.00,'pending',NULL,'2026-05-21 16:48:43','2026-05-21 16:48:43'),(20,202311094,1,NULL,17,3,4,'tuition_installment','Tuition Installment 3 of 4','2026-03-25',165.00,0.00,NULL,0.00,'pending',NULL,'2026-05-21 16:48:43','2026-05-21 16:48:43'),(21,202311094,1,NULL,17,4,4,'tuition_installment','Tuition Installment 4 of 4','2026-04-08',165.00,0.00,NULL,0.00,'pending',NULL,'2026-05-21 16:48:43','2026-05-21 16:48:43'),(22,202311094,1,NULL,NULL,NULL,NULL,'registration','Spring 2026 Registration Fee','2026-02-04',250.00,0.00,250.00,0.00,'pending',NULL,'2026-05-21 16:48:43','2026-05-21 16:48:43');
 /*!40000 ALTER TABLE `student_financial_transactions` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -646,7 +906,7 @@ CREATE TABLE `users` (
 
 LOCK TABLES `users` WRITE;
 /*!40000 ALTER TABLE `users` DISABLE KEYS */;
-INSERT INTO `users` VALUES (201412345,'Ali Ibrahim','$2b$10$dsm7ztdFg5mCccYtGeKap.Mtx7zOnNWFCo6BOcyc33vZPHzLk6N16','instructor','1991-04-29','aliibrahim@ua.edu.lb','71123456','active'),(202000000,'Admin Zein','$2b$10$C3erntex7U.qwzQnURh5IOFJJdnbIIcM/aCd5gWPvy4xA8GJi.zBC','admin','1990-04-22',NULL,NULL,'active'),(202000001,'Finance Ali','$2b$10$6vcRnjaHwe35Blda8J4K8ON..j34tkcZ4dhv5HOLGebJ18PH/6YcK','finance_officer','2000-01-29','aliFinance@ua.edu.lb','03000001','active'),(202311094,'Zein Al Abidin Sawly','$2b$10$p3xCYHSO/h13NQHahZb3PuQ3nhLseXksLfkjtCEG38R8XrapJulpO','student','2005-07-27','zeinsawly@ua.edu.lb','70629507','active');
+INSERT INTO `users` VALUES (201412345,'Ali Ibrahim','$2b$10$dsm7ztdFg5mCccYtGeKap.Mtx7zOnNWFCo6BOcyc33vZPHzLk6N16','instructor','1991-04-29','201412345@ua.edu.lb','71123456','active'),(202000000,'Admin Zein','$2b$10$C3erntex7U.qwzQnURh5IOFJJdnbIIcM/aCd5gWPvy4xA8GJi.zBC','admin','1990-04-22',NULL,NULL,'active'),(202000001,'Finance Ali','$2b$10$6vcRnjaHwe35Blda8J4K8ON..j34tkcZ4dhv5HOLGebJ18PH/6YcK','finance_officer','2000-01-29','200000001@ua.edu.lb','03000001','active'),(202311094,'Zein Al Abidin Sawly','$2b$10$p3xCYHSO/h13NQHahZb3PuQ3nhLseXksLfkjtCEG38R8XrapJulpO','student','2005-07-27','202311094@ua.edu.lb','70629507','active');
 /*!40000 ALTER TABLE `users` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -663,4 +923,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-05-20 17:14:51
+-- Dump completed on 2026-05-21 20:30:18
