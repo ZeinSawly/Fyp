@@ -266,4 +266,99 @@ const addPayment = async (req, res) => {
     }
   };
 
-  module.exports = {addPayment, markPaymentPaid, getStudentPendingPayments, getFinanceStats};
+  const searchStudents = async (req, res) => {
+    const { q } = req.query;
+  
+    if (!q || q.trim().length < 1) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+      });
+    }
+  
+    const trimmed = q.trim();
+    const searchTerm = `%${trimmed}%`;
+    const isNumeric = /^\d+$/.test(trimmed);
+    const idValue = isNumeric ? parseInt(trimmed, 10) : null;
+  
+    try {
+      let whereClause;
+      let params;
+  
+      if (isNumeric) {
+        whereClause = `u.id = ? OR u.name LIKE ? OR u.email LIKE ?`;
+        params = [idValue, searchTerm, searchTerm];
+      } else {
+        whereClause = `u.name LIKE ? OR u.email LIKE ?`;
+        params = [searchTerm, searchTerm];
+      }
+  
+      const orderClause = isNumeric
+        ? `CASE WHEN u.id = ? THEN 0 ELSE 1 END, u.name ASC`
+        : `u.name ASC`;
+  
+      const orderParams = isNumeric ? [idValue] : [];
+  
+      const sql = `
+        SELECT 
+            u.id,
+            u.name,
+            u.email,
+            u.dob,
+            m.name AS major_name,
+            d.name AS department_name,
+            s.gpa,
+            s.completed_credits,
+            s.enrollment_date,
+            s.campus,
+            
+            (SELECT COALESCE(SUM(t.amount - COALESCE(t.amount_paid, 0)), 0)
+             FROM student_financial_transactions t
+             WHERE t.student_id = u.id
+               AND t.status != 'paid'
+               AND NOT EXISTS (
+                 SELECT 1 FROM student_financial_transactions child
+                 WHERE child.parent_transaction_id = t.id
+               )
+            ) AS outstanding_balance,
+            
+            (SELECT COUNT(*)
+             FROM student_financial_transactions t
+             WHERE t.student_id = u.id
+               AND t.status != 'paid'
+               AND t.due_date IS NOT NULL
+               AND t.due_date < CURDATE()
+               AND NOT EXISTS (
+                 SELECT 1 FROM student_financial_transactions child
+                 WHERE child.parent_transaction_id = t.id
+               )
+            ) AS overdue_count
+            
+         FROM users u
+         JOIN students s ON s.user_id = u.id
+         LEFT JOIN majors m ON s.major_id = m.id
+         LEFT JOIN departments d ON m.department_id = d.id
+         WHERE u.role = 'student'
+           AND u.status = 'active'
+           AND (${whereClause})
+         ORDER BY ${orderClause}
+         LIMIT 20`;
+    
+      const [students] = await db.promise().query(sql, [...params, ...orderParams]);
+  
+      return res.status(200).json({
+        success: true,
+        data: students,
+        count: students.length,
+      });
+    } catch (error) {
+      console.error('Search students error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error',
+        error: error.message,
+      });
+    }
+  };
+
+  module.exports = {addPayment, markPaymentPaid, getStudentPendingPayments, getFinanceStats, searchStudents};

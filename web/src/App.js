@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './Pages/Login';
 
 import FinanceDashboard from './Pages/Finance/FinanceDashboard';
+import StudentSearch from './Pages/Finance/StudentSearch';
+
 
 import AdminDashboard from './Pages/Admin/AdminDashboard';
 import AddStudent from './Pages/Admin/AddStudent';
@@ -89,9 +91,9 @@ export default function App() {
           </PrivateRoute>
         } />
 
-        <Route path="/finance/add-payment" element={
+        <Route path="/finance/student-summary" element={
           <PrivateRoute role="finance_officer">
-            <div>Add Payment Page - Coming Soon</div>
+            <StudentSearch />
           </PrivateRoute>
         } />
 

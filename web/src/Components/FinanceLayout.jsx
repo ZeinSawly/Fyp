@@ -31,7 +31,7 @@ export default function FinanceLayout({ children, title = 'Dashboard' }) {
         { key: '/finance/mark-payment', icon: <CheckCircleOutlined />, label: 'Mark Payment Paid' },
       ],
     },
-    { key: '/finance/student-summary', icon: <SearchOutlined />, label: 'Student Summary' },
+    { key: '/finance/student-summary', icon: <SearchOutlined />, label: 'Student Search' },
     { key: '/finance/payment-report', icon: <FileTextOutlined />, label: 'Payment Reports' },
   ];
 
