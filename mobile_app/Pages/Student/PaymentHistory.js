@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, ActivityIndicator,
-  RefreshControl, TouchableOpacity, Modal,
+  RefreshControl, TouchableOpacity, Modal, Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { downloadPaymentReceipt } from '../../utils/receiptGenerator';
 import api from '../../config/api';
 
 const PAYMENT_METHOD_LABELS = {
@@ -102,15 +103,20 @@ const PaymentHistory = ({ navigation, route }) => {
     `$${Number(amount || 0).toFixed(2)}`;
 
   const handleDownloadReceipt = async (payment) => {
-    // Placeholder for now - will be implemented in Step 3
     setDownloadingId(payment.id);
-    console.log('TODO: Download receipt for payment', payment.id, payment.reference_number);
-
-    // Simulate a brief delay so the UI feedback is visible
-    setTimeout(() => {
+  
+    try {
+      await downloadPaymentReceipt(studentId, payment.id);
+      // After share sheet closes, the user has saved or shared it. Nothing more to do.
+    } catch (err) {
+      console.error('Download receipt error:', err);
+      Alert.alert(
+        'Receipt Download Failed',
+        err.message || 'Could not generate the receipt. Please try again.'
+      );
+    } finally {
       setDownloadingId(null);
-      alert(`Receipt download coming in next step!\n\nPayment: ${payment.reference_number}`);
-    }, 500);
+    }
   };
 
   const renderPaymentItem = (payment) => {
