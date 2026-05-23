@@ -45,6 +45,12 @@ const {
     deleteSemester
 } = require('../controllers/semesterController');
 
+const {
+    getCurrentCreditPrices,
+    getCreditPricingHistory,
+    updateCreditPrice,
+  } = require('../controllers/pricingController');
+
 const { verifyToken } = require('../middlewares/authMiddleware');
 
 // ============================================
@@ -118,5 +124,13 @@ router.post('/semesters', createSemester);
 router.put('/semesters/:id', updateSemester);
 router.put('/semesters/:id/set-current', setCurrentSemester);
 router.delete('/semesters/:id', deleteSemester);
+
+// ============================================
+// CREDIT PRICING
+// ============================================
+router.get('/credit-pricing/current', getCurrentCreditPrices);
+router.get('/credit-pricing/history', getCreditPricingHistory);
+router.put('/credit-pricing', updateCreditPrice);
+
 
 module.exports = router;

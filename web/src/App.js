@@ -18,6 +18,8 @@ import DeactivateFinanceOfficer from './Pages/Admin/DeactivateFinanceOfficer';
 import CourseManagement from './Pages/Admin/CourseManagement';
 import EditCourse from './Pages/Admin/EditCourse';
 import SemesterManagement from './Pages/Admin/SemesterManagement';
+import CreditPricing from './Pages/Admin/CreditPricing';
+
 
 
 import './App.css';
@@ -86,6 +88,11 @@ export default function App() {
         {/* Semester Management */}
         <Route path="/admin/semesters" element={
           <PrivateRoute role="admin"><SemesterManagement /></PrivateRoute>
+        } />
+
+        {/* Credit Pricing */}
+        <Route path="/admin/credit-pricing" element={
+          <PrivateRoute role="admin"><CreditPricing /></PrivateRoute>
         } />
 
         {/* Finance Officer Portal Routes */}

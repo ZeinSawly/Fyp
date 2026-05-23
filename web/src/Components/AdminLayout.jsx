@@ -3,10 +3,8 @@ import { Layout, Menu, Avatar, Dropdown, Button } from 'antd';
 import {
   DashboardOutlined, UserAddOutlined, UserDeleteOutlined,
   TeamOutlined, DollarOutlined, BookOutlined,
-  CheckCircleOutlined, LogoutOutlined, MenuFoldOutlined,
   MenuUnfoldOutlined, BankOutlined, SafetyCertificateOutlined,
-  BellOutlined,
-  CalendarOutlined,
+  BellOutlined, CalendarOutlined, LogoutOutlined, MenuFoldOutlined
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -59,7 +57,13 @@ export default function AdminLayout({ children, title = 'Dashboard' }) {
         { key: '/admin/semesters', icon: <BookOutlined />, label: 'Manage Semesters' },
       ],
     },
-    { key: '/admin/grade-components', icon: <BookOutlined />, label: 'Grade Components' },
+    {
+      key: 'finance', icon: <DollarOutlined />, label: 'Finance',
+      children: [
+        { key: '/admin/credit-pricing', icon: <DollarOutlined />, label: 'Credit Pricing' },
+        // Fee Management and Discount Management will go here next
+      ],
+    },
   ];
 
   const userMenuItems = [
