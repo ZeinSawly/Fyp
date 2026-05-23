@@ -606,7 +606,7 @@ export default function DiscountManagement() {
 
   return (
     <AdminLayout title="Discount Management">
-      <div style={{ maxWidth: 1300, margin: '0 auto' }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto' }}>
 
         <div style={{ marginBottom: 24 }}>
           <Button type="text" icon={<ArrowLeftOutlined />}

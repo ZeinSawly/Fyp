@@ -3,8 +3,12 @@ import { Layout, Menu, Avatar, Dropdown, Button } from 'antd';
 import {
   DashboardOutlined, UserAddOutlined, UserDeleteOutlined,
   TeamOutlined, DollarOutlined, BookOutlined,
+  CheckCircleOutlined, LogoutOutlined, MenuFoldOutlined,
   MenuUnfoldOutlined, BankOutlined, SafetyCertificateOutlined,
-  BellOutlined, CalendarOutlined, LogoutOutlined, MenuFoldOutlined, TagOutlined, GiftOutlined
+  BellOutlined,
+  CalendarOutlined,
+  TagOutlined,
+  GiftOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -65,6 +69,7 @@ export default function AdminLayout({ children, title = 'Dashboard' }) {
         { key: '/admin/discount-management', icon: <GiftOutlined />, label: 'Discount Management' },
       ],
     },
+    { key: '/admin/grade-components', icon: <BookOutlined />, label: 'Grade Components' },
   ];
 
   const userMenuItems = [
@@ -86,6 +91,8 @@ export default function AdminLayout({ children, title = 'Dashboard' }) {
           left: 0,
           top: 0,
           zIndex: 100,
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
         {/* Logo */}
@@ -97,6 +104,7 @@ export default function AdminLayout({ children, title = 'Dashboard' }) {
           padding: collapsed ? 0 : '0 20px',
           gap: 10,
           borderBottom: '1px solid rgba(255,255,255,0.1)',
+          flexShrink: 0,
         }}>
           <div style={{
             width: 36, height: 36, borderRadius: 10,
@@ -119,26 +127,42 @@ export default function AdminLayout({ children, title = 'Dashboard' }) {
           )}
         </div>
 
-        {/* Menu */}
-        <Menu
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          defaultOpenKeys={['students', 'instructors', 'finance']}
-          items={menuItems}
-          onClick={({ key }) => navigate(key)}
-          style={{ background: 'transparent', border: 'none', marginTop: 8 }}
-          theme="dark"
-        />
+        {/* Scrollable Menu Area */}
+        <div style={{
+          flex: 1,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          // Custom scrollbar for a subtle look in the dark sidebar
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(255,255,255,0.2) transparent',
+        }}>
+          <Menu
+            mode="inline"
+            selectedKeys={[location.pathname]}
+            defaultOpenKeys={['students', 'instructors', 'finance-officers', 'courses', 'semesters', 'finance']}
+            items={menuItems}
+            onClick={({ key }) => navigate(key)}
+            style={{ background: 'transparent', border: 'none', marginTop: 8, paddingBottom: 8 }}
+            theme="dark"
+          />
+        </div>
 
-        {/* Bottom user info */}
+        {/* Bottom User Info — now part of the flex flow */}
         {!collapsed && (
           <div style={{
-            position: 'absolute', bottom: 20, left: 12, right: 12,
+            margin: 12,
             background: 'rgba(255,255,255,0.1)',
-            borderRadius: 12, padding: '10px 14px',
+            borderRadius: 12,
+            padding: '10px 14px',
             border: '1px solid rgba(255,255,255,0.15)',
+            flexShrink: 0,
           }}>
-            <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, marginBottom: 2, textTransform: 'uppercase' }}>
+            <div style={{
+              color: 'rgba(255,255,255,0.5)',
+              fontSize: 10,
+              marginBottom: 2,
+              textTransform: 'uppercase'
+            }}>
               Logged in as
             </div>
             <div style={{ color: '#fff', fontWeight: 700, fontSize: 13 }}>
@@ -151,7 +175,12 @@ export default function AdminLayout({ children, title = 'Dashboard' }) {
         )}
       </Sider>
 
-      <Layout style={{ marginLeft: collapsed ? 80 : 240, transition: 'all 0.2s' }}>
+      <Layout style={{
+        marginLeft: collapsed ? 80 : 240,
+        transition: 'all 0.2s',
+        minHeight: '100vh',
+      }}>
+
         {/* Header */}
         <Header style={{
           background: '#fff',
@@ -164,25 +193,50 @@ export default function AdminLayout({ children, title = 'Dashboard' }) {
           top: 0,
           zIndex: 99,
           height: 64,
+          lineHeight: 'normal',     // ← KEY FIX: antd's Header has lineHeight: 64px by default
+          gap: 16,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          {/* Left side: collapse button + title */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 16,
+            flex: 1,
+            minWidth: 0,
+          }}>
             <Button
               type="text"
               icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
               onClick={() => setCollapsed(!collapsed)}
-              style={{ fontSize: 18, color: '#1a365d', width: 40, height: 40 }}
+              style={{ fontSize: 18, color: '#1a365d', width: 40, height: 40, flexShrink: 0 }}
             />
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 800, color: '#1a365d', lineHeight: 1.2 }}>
+            <div style={{ minWidth: 0, overflow: 'hidden' }}>
+              <div style={{
+                fontSize: 16,
+                fontWeight: 800,
+                color: '#1a365d',
+                lineHeight: 1.2,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}>
                 {title}
               </div>
-              <div style={{ fontSize: 11, color: '#94A3B8' }}>
+              <div style={{
+                fontSize: 11,
+                color: '#94A3B8',
+                lineHeight: 1.2,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}>
                 Antonine University — Admin Portal
               </div>
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Right side: notifications + user dropdown */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <Button
               type="text"
               icon={<BellOutlined />}
@@ -196,19 +250,32 @@ export default function AdminLayout({ children, title = 'Dashboard' }) {
               placement="bottomRight"
             >
               <div style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                cursor: 'pointer', padding: '4px 12px',
-                borderRadius: 10, border: '1px solid #E2E8F0',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                cursor: 'pointer',
+                padding: '4px 12px',
+                borderRadius: 10,
+                border: '1px solid #E2E8F0',
                 background: '#F8FAFC',
+                lineHeight: 'normal',
               }}>
-                <Avatar style={{ backgroundColor: '#2b6cb0', fontWeight: 700 }}>
+                <Avatar style={{ backgroundColor: '#2b6cb0', fontWeight: 700, flexShrink: 0 }}>
                   {user.name?.charAt(0) || 'A'}
                 </Avatar>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: '#1a365d', lineHeight: 1.2 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{
+                    fontWeight: 700,
+                    fontSize: 13,
+                    color: '#1a365d',
+                    lineHeight: 1.2,
+                    whiteSpace: 'nowrap',
+                  }}>
                     {user.name}
                   </div>
-                  <div style={{ fontSize: 11, color: '#94A3B8' }}>Administrator</div>
+                  <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.2 }}>
+                    Administrator
+                  </div>
                 </div>
               </div>
             </Dropdown>
@@ -216,7 +283,11 @@ export default function AdminLayout({ children, title = 'Dashboard' }) {
         </Header>
 
         {/* Content */}
-        <Content style={{ margin: 24, minHeight: 'calc(100vh - 112px)' }}>
+        <Content style={{
+          margin: 24,
+          minHeight: 'calc(100vh - 112px)',
+          overflowX: 'hidden',
+        }}>
           {children}
         </Content>
       </Layout>

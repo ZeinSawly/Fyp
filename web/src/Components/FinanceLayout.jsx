@@ -122,7 +122,11 @@ export default function FinanceLayout({ children, title = 'Dashboard' }) {
           justifyContent: 'space-between',
           boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
           position: 'sticky',
-          top: 0, zIndex: 99, height: 64,
+          top: 0, 
+          zIndex: 99, 
+          height: 64,
+          lineHeight: 'normal',
+          gap: 16,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <Button
@@ -132,7 +136,7 @@ export default function FinanceLayout({ children, title = 'Dashboard' }) {
               style={{ fontSize: 18, color: '#1a365d', width: 40, height: 40 }}
             />
             <div>
-              <div style={{ fontSize: 16, fontWeight: 800, color: '#1a365d', lineHeight: 1.2 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: '#1a365d', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
                 {title}
               </div>
               <div style={{ fontSize: 11, color: '#94A3B8' }}>
@@ -141,7 +145,7 @@ export default function FinanceLayout({ children, title = 'Dashboard' }) {
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0}}>
             <Button
               type="text" icon={<BellOutlined />}
               style={{ fontSize: 18, color: '#64748B', width: 40, height: 40 }}
@@ -157,16 +161,16 @@ export default function FinanceLayout({ children, title = 'Dashboard' }) {
                 display: 'flex', alignItems: 'center', gap: 10,
                 cursor: 'pointer', padding: '4px 12px',
                 borderRadius: 10, border: '1px solid #E2E8F0',
-                background: '#F8FAFC',
+                background: '#F8FAFC', lineHeight: 'normal'
               }}>
                 <Avatar style={{ backgroundColor: '#276749', fontWeight: 700 }}>
                   {user.name?.charAt(0) || 'F'}
                 </Avatar>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: '#1a365d', lineHeight: 1.2 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: '#1a365d', lineHeight: 1.2, whiteSpace: 'nowrap',}}>
                     {user.name}
                   </div>
-                  <div style={{ fontSize: 11, color: '#94A3B8' }}>Finance Officer</div>
+                  <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.2  }}>Finance Officer</div>
                 </div>
               </div>
             </Dropdown>

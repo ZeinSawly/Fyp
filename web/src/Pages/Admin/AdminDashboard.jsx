@@ -2,10 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Card, Row, Col, Typography, Spin, Alert } from 'antd';
 import {
   TeamOutlined, UserOutlined, BookOutlined,
-  UserAddOutlined, UserDeleteOutlined,
-  BarChartOutlined, IdcardOutlined,
-  GlobalOutlined, CalendarOutlined, ApartmentOutlined, BankOutlined,
-  SolutionOutlined, PlusOutlined, ScheduleOutlined,
+  IdcardOutlined, GlobalOutlined, CalendarOutlined, 
+  ApartmentOutlined, SolutionOutlined, DollarOutlined
 } from '@ant-design/icons';   
 import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../../Components/AdminLayout';
@@ -88,20 +86,6 @@ export default function AdminDashboard() {
       bg: '#FFFBEB',
       desc: 'Active courses',
     },
-  ];
-
-  const quickActions = [
-    { label: 'Add Student', icon: <UserAddOutlined />, color: '#2b6cb0', bg: '#EFF6FF', path: '/admin/add-student', desc: 'Register a new student' },
-    { label: 'Deactivate Student', icon: <UserDeleteOutlined />, color: '#d97706', bg: '#FFFBEB', path: '/admin/delete-student', desc: 'Disable a student account' },    
-    { label: 'Add Instructor', icon: <UserAddOutlined />, color: '#2f855a', bg: '#F0FFF4', path: '/admin/add-instructor', desc: 'Register a new instructor' },
-    { label: 'Deactivate Instructor', icon: <UserDeleteOutlined />, color: '#d97706', bg: '#FFFBEB', path: '/admin/delete-instructor', desc: 'Remove an instructor account' },
-    { label: 'Add Finance Officer', icon: <BankOutlined />, color: '#6b46c1', bg: '#FAF5FF', path: '/admin/add-finance-officer', desc: 'Register a finance officer' },
-    { label: 'Deactivate Finance Officer', icon: <UserDeleteOutlined />, color: '#d97706', bg: '#FFFBEB', path: '/admin/delete-finance-officer', desc: 'Disable a finance officer account' },
-    { label: 'Manage Courses', icon: <BookOutlined />, color: '#2b6cb0', bg: '#EFF6FF', path: '/admin/course-management', desc: 'Add courses & sections' },
-    { label: 'Add Section', icon: <PlusOutlined />, color: '#2f855a', bg: '#F0FFF4', path: '/admin/course-management', desc: 'Create course sections' },
-    { label: 'Set Schedule', icon: <ScheduleOutlined />, color: '#d97706', bg: '#FFFBEB', path: '/admin/course-management', desc: 'Assign time & room' },
-    { label: 'Grade Components', icon: <BarChartOutlined />, color: '#6b46c1', bg: '#FAF5FF', path: '/admin/grade-components', desc: 'Setup grading per course' },
-    { label: 'Semesters', icon: <CalendarOutlined />, color: '#6b46c1', bg: '#FAF5FF', path: '/admin/semesters', desc: 'Manage academic semesters' },
   ];
 
   const systemInfo = [
@@ -204,56 +188,6 @@ export default function AdminDashboard() {
         ))}
       </Row>
 
-      {/* Quick Actions */}
-      <Card
-        title={<span style={{ color: '#1a365d', fontWeight: 700, fontSize: 15 }}>Quick Actions</span>}
-        style={{ borderRadius: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', marginBottom: 24 }}
-      >
-        <Row gutter={[12, 12]}>
-          {quickActions.map((action, i) => (
-            <Col xs={24} sm={12} md={8} lg={6} xl={4} key={i}>
-              <div
-                onClick={() => navigate(action.path)}
-                style={{
-                  padding: '20px 14px', borderRadius: 14,
-                  border: '2px solid #E2E8F0', textAlign: 'center',
-                  cursor: 'pointer', transition: 'all 0.2s',
-                  backgroundColor: '#fff',
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.borderColor = action.color;
-                  e.currentTarget.style.backgroundColor = action.bg;
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = `0 8px 20px ${action.color}25`;
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.borderColor = '#E2E8F0';
-                  e.currentTarget.style.backgroundColor = '#fff';
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = 'none';
-                }}
-              >
-                <div style={{
-                  width: 44, height: 44, borderRadius: 12,
-                  backgroundColor: action.bg,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  margin: '0 auto 10px',
-                  fontSize: 20, color: action.color,
-                }}>
-                  {action.icon}
-                </div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#1E293B', marginBottom: 4 }}>
-                  {action.label}
-                </div>
-                <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.4 }}>
-                  {action.desc}
-                </div>
-              </div>
-            </Col>
-          ))}
-        </Row>
-      </Card>
-
       {/* Bottom row */}
       <Row gutter={[16, 16]}>
 
@@ -295,10 +229,13 @@ export default function AdminDashboard() {
             style={{ borderRadius: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', height: '100%' }}
           >
             {[
-              { label: 'Student Management', desc: 'Add and remove student accounts', icon: <TeamOutlined />, color: '#2b6cb0', bg: '#EFF6FF', path: '/admin/add-student' },
-              { label: 'Instructor Management', desc: 'Add and remove instructor accounts', icon: <UserOutlined />, color: '#2f855a', bg: '#F0FFF4', path: '/admin/add-instructor' },
+              { label: 'Student Management', desc: 'Add and deactivate student accounts', icon: <TeamOutlined />, color: '#2b6cb0', bg: '#EFF6FF', path: '/admin/add-student' },
+              { label: 'Instructor Management', desc: 'Add and deactivate instructor accounts', icon: <UserOutlined />, color: '#2f855a', bg: '#F0FFF4', path: '/admin/add-instructor' },
+              { label: 'Finance Officer Management', desc: 'Add and deactivate finance officers accounts', icon: <UserOutlined />, color: '#2f855a', bg: '#F0FFF4', path: '/admin/add-finance-officer' },
               { label: 'Course Management', desc: 'Add courses, sections, and schedules', icon: <BookOutlined />, color: '#d97706', bg: '#FFFBEB', path: '/admin/course-management' },
-              { label: 'Grade Components', desc: 'Set up grading structure per course', icon: <BarChartOutlined />, color: '#6b46c1', bg: '#FAF5FF', path: '/admin/grade-components' },
+              { label: 'Semester Management', desc: 'Add and edit semesters', icon: <CalendarOutlined />, color: '#d97706', bg: '#FFFBEB', path: '/admin/semesters' },
+              { label: 'Finance Management', desc: 'Manage credit pricings, fees, and student discounts', icon: <DollarOutlined />, color: '#d97706', bg: '#FFFBEB', path: '/admin/credit-pricing' },
+
             ].map((mod, i) => (
               <div
                 key={i}
