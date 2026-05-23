@@ -11,15 +11,12 @@ import GenerateBills from './Pages/Finance/GenerateBills';
 import AdminDashboard from './Pages/Admin/AdminDashboard';
 import AddStudent from './Pages/Admin/AddStudent';
 import DeactivateStudent from './Pages/Admin/DeactivateStudent';
-
 import AddInstructor from './Pages/Admin/AddInstructor';
 import DeactivateInstructor from './Pages/Admin/DeactivateInstructor';
-
 import AddFinanceOfficer from './Pages/Admin/AddFinanceOfficer';
 import DeactivateFinanceOfficer from './Pages/Admin/DeactivateFinanceOfficer';
-
 import CourseManagement from './Pages/Admin/CourseManagement';
-
+import EditCourse from './Pages/Admin/EditCourse';
 import SemesterManagement from './Pages/Admin/SemesterManagement';
 
 
@@ -79,6 +76,11 @@ export default function App() {
         {/* Course Management */}
         <Route path="/admin/course-management" element={
           <PrivateRoute role="admin"><CourseManagement /></PrivateRoute>
+        } />
+
+        {/* Edit Course */}
+        <Route path="/admin/course/:course_id/edit" element={
+          <PrivateRoute role="admin"><EditCourse /></PrivateRoute>
         } />
 
         {/* Semester Management */}

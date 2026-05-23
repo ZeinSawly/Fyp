@@ -411,11 +411,206 @@ const getSectionSchedule = async (req, res) => {
   }
 };
 
+// ─── GET COURSE BY ID (with prerequisites) ───
+const getCourseById = async (req, res) => {
+  const { course_id } = req.params;
+
+  if (!course_id) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Course ID is required' 
+    });
+  }
+
+  try {
+    // 1. Get the course itself
+    const [courseRows] = await db.promise().query(
+      `SELECT 
+          c.id, c.name, c.description, c.credits, c.type, c.major_id,
+          m.name AS major_name,
+          d.id AS department_id,
+          d.name AS department_name
+       FROM courses c
+       LEFT JOIN majors m ON c.major_id = m.id
+       LEFT JOIN departments d ON m.department_id = d.id
+       WHERE c.id = ?`,
+      [course_id]
+    );
+
+    if (courseRows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Course not found' 
+      });
+    }
+
+    const course = courseRows[0];
+
+    // 2. Get its prerequisites
+    const [prereqs] = await db.promise().query(
+      `SELECT 
+          cp.prerequisite_id AS id,
+          c.name,
+          c.credits,
+          c.type
+       FROM course_prerequisites cp
+       JOIN courses c ON cp.prerequisite_id = c.id
+       WHERE cp.course_id = ?
+       ORDER BY c.id ASC`,
+      [course_id]
+    );
+
+    // 3. Quick stats — does this course have sections/enrollments?
+    // Useful context for the admin
+    const [[stats]] = await db.promise().query(
+      `SELECT
+          (SELECT COUNT(*) FROM course_sections WHERE course_id = ?) AS section_count,
+          (SELECT COUNT(*) FROM course_enrollments ce
+           JOIN course_sections cs ON ce.section_id = cs.id
+           WHERE cs.course_id = ?) AS enrollment_count`,
+      [course_id, course_id]
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...course,
+        prerequisites: prereqs,
+        stats: {
+          section_count: Number(stats.section_count),
+          enrollment_count: Number(stats.enrollment_count),
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Get course by ID error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+};
+
+// ─── UPDATE COURSE (name, description, prerequisites only) ───
+const updateCourse = async (req, res) => {
+  const { course_id } = req.params;
+  const { name, description, prerequisite_ids } = req.body;
+
+  if (!course_id) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Course ID is required' 
+    });
+  }
+
+  if (!name || name.trim().length === 0) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Course name is required' 
+    });
+  }
+
+  const newPrereqs = Array.isArray(prerequisite_ids) ? prerequisite_ids : [];
+
+  const connection = await db.promise().getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // 1. Verify the course exists
+    const [existing] = await connection.query(
+      `SELECT id FROM courses WHERE id = ?`,
+      [course_id]
+    );
+
+    if (existing.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Course not found' 
+      });
+    }
+
+    // 2. Validate prereqs
+    if (newPrereqs.length > 0) {
+      // No self-prereq
+      if (newPrereqs.includes(course_id)) {
+        await connection.rollback();
+        return res.status(400).json({ 
+          success: false, 
+          message: 'A course cannot be its own prerequisite' 
+        });
+      }
+
+      // Verify all prereq IDs exist
+      const [found] = await connection.query(
+        `SELECT id FROM courses WHERE id IN (?)`,
+        [newPrereqs]
+      );
+
+      if (found.length !== newPrereqs.length) {
+        const foundIds = found.map(r => r.id);
+        const missingIds = newPrereqs.filter(id => !foundIds.includes(id));
+        await connection.rollback();
+        return res.status(400).json({ 
+          success: false, 
+          message: `Prerequisite course(s) not found: ${missingIds.join(', ')}` 
+        });
+      }
+    }
+
+    // 3. Update the course fields
+    await connection.query(
+      `UPDATE courses 
+       SET name = ?, description = ?
+       WHERE id = ?`,
+      [name.trim(), description || null, course_id]
+    );
+
+    // 4. Replace prerequisites (simpler than computing diffs)
+    await connection.query(
+      `DELETE FROM course_prerequisites WHERE course_id = ?`,
+      [course_id]
+    );
+
+    if (newPrereqs.length > 0) {
+      const values = newPrereqs.map(prereqId => [course_id, prereqId]);
+      await connection.query(
+        `INSERT INTO course_prerequisites (course_id, prerequisite_id) VALUES ?`,
+        [values]
+      );
+    }
+
+    await connection.commit();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Course updated successfully',
+      data: {
+        course_id,
+        prerequisites_count: newPrereqs.length,
+      },
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Update course error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: error.message 
+    });
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getAllCourses, addCourse,
   getCourseSections, addCourseSection,
   getAllInstructors,
   addCourseSchedule, getSectionSchedule,
   getAllMajors, getCoursesBySemester,
-  getAvailablePrerequisites, getCoursePrerequisites
+  getAvailablePrerequisites, getCoursePrerequisites,
+  getCourseById, updateCourse,
 };

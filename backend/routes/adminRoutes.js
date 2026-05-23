@@ -33,6 +33,8 @@ const {
     getCoursesBySemester,
     getAvailablePrerequisites,
     getCoursePrerequisites,
+    getCourseById,
+    updateCourse,
 } = require('../controllers/courseController');
 
 const {
@@ -97,6 +99,10 @@ router.post('/courses/sections/add', addCourseSection);
 // Course Schedule
 router.post('/courses/schedule/add', addCourseSchedule);
 router.get('/sections/:section_id/schedule', getSectionSchedule);
+
+// Edit Course
+router.get('/courses/:course_id', getCourseById);
+router.put('/courses/:course_id', updateCourse);
 
 // ============================================
 // GRADE COMPONENTS

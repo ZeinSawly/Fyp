@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Card, Form, Input, Button, Select, Alert, Typography,
-  Row, Col, Divider, Table, Tag, Tabs, InputNumber, Space
+  Row, Col, Divider, Table, Tag, Tabs, InputNumber, Space, Tooltip
 } from 'antd';
 import {
   BookOutlined, ArrowLeftOutlined, CheckCircleOutlined,
@@ -484,6 +484,12 @@ export default function CourseManagement() {
                 size="small"
                 pagination={{ pageSize: 8, showTotal: (total) => `Total ${total} courses` }}
                 locale={{ emptyText: selectedMajorFilter ? 'No courses found for this major' : 'No courses available' }}
+                onRow={(record) => ({
+                  onClick: () => navigate(`/admin/course/${encodeURIComponent(record.id)}/edit`),
+                  style: { cursor: 'pointer' },
+                  onMouseEnter: (e) => e.currentTarget.style.background = '#F0F9FF',
+                  onMouseLeave: (e) => e.currentTarget.style.background = '',
+                })}
               />
             </Card>
           </Col>
