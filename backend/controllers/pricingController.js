@@ -533,6 +533,380 @@ const updateFeePrice = async (req, res) => {
   }
 };
 
+// ============================================================
+// DISCOUNT TYPES
+// ============================================================
+
+// GET /api/admin/discount-types
+const getDiscountTypes = async (req, res) => {
+  try {
+    const [rows] = await db.promise().query(
+      `SELECT 
+          id, code, name, description, scope, calculation, applies_to,
+          is_active, created_at
+       FROM discount_types
+       ORDER BY is_active DESC, name ASC`
+    );
+
+    return res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Get discount types error:', error);
+    return res.status(500).json({
+      success: false, message: 'Server error', error: error.message,
+    });
+  }
+};
+
+// POST /api/admin/discount-types
+const createDiscountType = async (req, res) => {
+  const { code, name, description, scope, calculation, applies_to } = req.body;
+
+  if (!code || !name || !scope || !calculation || !applies_to) {
+    return res.status(400).json({
+      success: false,
+      message: 'code, name, scope, calculation, and applies_to are required',
+    });
+  }
+
+  const validScopes = ['semester', 'academic_year'];
+  const validCalcs = ['percentage', 'fixed_amount'];
+  const validAppliesTo = ['tuition_only', 'tuition_and_fees', 'specific_fee'];
+
+  if (!validScopes.includes(scope)) {
+    return res.status(400).json({ success: false, message: `scope must be one of: ${validScopes.join(', ')}` });
+  }
+  if (!validCalcs.includes(calculation)) {
+    return res.status(400).json({ success: false, message: `calculation must be one of: ${validCalcs.join(', ')}` });
+  }
+  if (!validAppliesTo.includes(applies_to)) {
+    return res.status(400).json({ success: false, message: `applies_to must be one of: ${validAppliesTo.join(', ')}` });
+  }
+
+  try {
+    const codeUpper = code.toUpperCase().trim();
+
+    const [existing] = await db.promise().query(
+      `SELECT id FROM discount_types WHERE code = ?`, [codeUpper]
+    );
+
+    if (existing.length > 0) {
+      return res.status(400).json({
+        success: false, message: `A discount type with code "${codeUpper}" already exists`,
+      });
+    }
+
+    await db.promise().query(
+      `INSERT INTO discount_types (code, name, description, scope, calculation, applies_to, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, 1)`,
+      [codeUpper, name.trim(), description || null, scope, calculation, applies_to]
+    );
+
+    return res.status(201).json({ success: true, message: 'Discount type created' });
+  } catch (error) {
+    console.error('Create discount type error:', error);
+    return res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
+// PUT /api/admin/discount-types/:id
+const updateDiscountType = async (req, res) => {
+  const { id } = req.params;
+  const { name, description, scope, calculation, applies_to, is_active } = req.body;
+
+  if (!name || !scope || !calculation || !applies_to) {
+    return res.status(400).json({ success: false, message: 'name, scope, calculation, and applies_to are required' });
+  }
+
+  try {
+    const [existing] = await db.promise().query(`SELECT id FROM discount_types WHERE id = ?`, [id]);
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, message: 'Discount type not found' });
+    }
+
+    await db.promise().query(
+      `UPDATE discount_types 
+       SET name = ?, description = ?, scope = ?, calculation = ?, applies_to = ?, is_active = ?
+       WHERE id = ?`,
+      [
+        name.trim(),
+        description || null,
+        scope,
+        calculation,
+        applies_to,
+        is_active === undefined ? 1 : (is_active ? 1 : 0),
+        id,
+      ]
+    );
+
+    return res.status(200).json({ success: true, message: 'Discount type updated' });
+  } catch (error) {
+    console.error('Update discount type error:', error);
+    return res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
+// ============================================================
+// AWARDING DISCOUNTS TO STUDENTS
+// ============================================================
+
+// GET /api/admin/student-discounts
+// List all awarded discounts (with filtering)
+const getStudentDiscounts = async (req, res) => {
+  const { student_id, status, discount_type_id } = req.query;
+
+  try {
+    const params = [];
+    let where = 'WHERE 1=1';
+
+    if (student_id) {
+      where += ' AND sd.student_id = ?';
+      params.push(student_id);
+    }
+    if (status) {
+      where += ' AND sd.status = ?';
+      params.push(status);
+    }
+    if (discount_type_id) {
+      where += ' AND sd.discount_type_id = ?';
+      params.push(discount_type_id);
+    }
+
+    const [rows] = await db.promise().query(
+      `SELECT 
+          sd.id,
+          sd.student_id,
+          sd.discount_type_id,
+          sd.percentage,
+          sd.fixed_amount,
+          sd.semester_id,
+          sd.academic_year,
+          sd.reason,
+          sd.status,
+          sd.created_at,
+          sd.updated_at,
+          dt.code AS type_code,
+          dt.name AS type_name,
+          dt.scope,
+          dt.calculation,
+          dt.applies_to,
+          u.name AS student_name,
+          sem.name AS semester_name,
+          approver.name AS approver_name
+       FROM student_discounts sd
+       JOIN discount_types dt ON sd.discount_type_id = dt.id
+       JOIN users u ON sd.student_id = u.id
+       LEFT JOIN semesters sem ON sd.semester_id = sem.id
+       LEFT JOIN users approver ON sd.approved_by = approver.id
+       ${where}
+       ORDER BY sd.created_at DESC`,
+      params
+    );
+
+    return res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Get student discounts error:', error);
+    return res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
+// POST /api/admin/student-discounts
+// Award a discount to a student
+const awardDiscount = async (req, res) => {
+  const { 
+    student_id, discount_type_id, percentage, fixed_amount,
+    semester_id, academic_year, reason 
+  } = req.body;
+  const approved_by = req.user?.id;
+
+  if (!student_id || !discount_type_id || !reason) {
+    return res.status(400).json({
+      success: false, message: 'student_id, discount_type_id, and reason are required',
+    });
+  }
+
+  if (!approved_by) {
+    return res.status(401).json({ success: false, message: 'Cannot identify admin' });
+  }
+
+  try {
+    // 1. Get the discount type to know its calculation method and scope
+    const [[type]] = await db.promise().query(
+      `SELECT scope, calculation, is_active 
+       FROM discount_types WHERE id = ?`,
+      [discount_type_id]
+    );
+
+    if (!type) {
+      return res.status(404).json({ success: false, message: 'Discount type not found' });
+    }
+
+    if (!type.is_active) {
+      return res.status(400).json({ success: false, message: 'This discount type is inactive' });
+    }
+
+    // 2. Validate value based on calculation method
+    if (type.calculation === 'percentage') {
+      if (!percentage || Number(percentage) <= 0 || Number(percentage) > 100) {
+        return res.status(400).json({ 
+          success: false, message: 'Percentage must be between 0 and 100' 
+        });
+      }
+    } else { // fixed_amount
+      if (!fixed_amount || Number(fixed_amount) <= 0) {
+        return res.status(400).json({ 
+          success: false, message: 'Fixed amount must be greater than 0' 
+        });
+      }
+    }
+
+    // 3. Validate scope value
+    if (type.scope === 'semester' && !semester_id) {
+      return res.status(400).json({ 
+        success: false, message: 'This discount requires a semester_id' 
+      });
+    }
+    if (type.scope === 'academic_year' && !academic_year) {
+      return res.status(400).json({ 
+        success: false, message: 'This discount requires an academic_year' 
+      });
+    }
+
+    // 4. Verify student exists
+    const [studentCheck] = await db.promise().query(
+      `SELECT id FROM users WHERE id = ? AND role = 'student' AND status = 'active'`,
+      [student_id]
+    );
+
+    if (studentCheck.length === 0) {
+      return res.status(404).json({ success: false, message: 'Active student not found' });
+    }
+
+    // 5. Check for duplicate active discount of same type+scope
+    let duplicateCheck;
+    if (type.scope === 'semester') {
+      [duplicateCheck] = await db.promise().query(
+        `SELECT id FROM student_discounts 
+         WHERE student_id = ? AND discount_type_id = ? 
+           AND semester_id = ? AND status = 'active'`,
+        [student_id, discount_type_id, semester_id]
+      );
+    } else {
+      [duplicateCheck] = await db.promise().query(
+        `SELECT id FROM student_discounts 
+         WHERE student_id = ? AND discount_type_id = ? 
+           AND academic_year = ? AND status = 'active'`,
+        [student_id, discount_type_id, academic_year]
+      );
+    }
+
+    if (duplicateCheck.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: 'This student already has an active discount of this type for this period',
+      });
+    }
+
+    // 6. Insert
+    const [result] = await db.promise().query(
+      `INSERT INTO student_discounts
+         (student_id, discount_type_id, percentage, fixed_amount,
+          semester_id, academic_year, reason, approved_by, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [
+        student_id,
+        discount_type_id,
+        type.calculation === 'percentage' ? Number(percentage) : null,
+        type.calculation === 'fixed_amount' ? Number(fixed_amount) : null,
+        type.scope === 'semester' ? semester_id : null,
+        type.scope === 'academic_year' ? academic_year : null,
+        reason.trim(),
+        approved_by,
+      ]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: 'Discount awarded successfully',
+      data: { id: result.insertId },
+    });
+  } catch (error) {
+    console.error('Award discount error:', error);
+    return res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
+// PUT /api/admin/student-discounts/:id/cancel
+// Cancel an awarded discount
+const cancelStudentDiscount = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const [existing] = await db.promise().query(
+      `SELECT status FROM student_discounts WHERE id = ?`, [id]
+    );
+
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, message: 'Discount not found' });
+    }
+
+    if (existing[0].status !== 'active') {
+      return res.status(400).json({ success: false, message: 'Discount is not active' });
+    }
+
+    await db.promise().query(
+      `UPDATE student_discounts SET status = 'cancelled' WHERE id = ?`, [id]
+    );
+
+    return res.status(200).json({ success: true, message: 'Discount cancelled' });
+  } catch (error) {
+    console.error('Cancel discount error:', error);
+    return res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
+// Helper endpoint: lightweight student search for the award form
+// GET /api/admin/students/search?q=...
+const searchStudentsForDiscount = async (req, res) => {
+  const { q } = req.query;
+  if (!q || q.trim().length < 1) {
+    return res.status(200).json({ success: true, data: [] });
+  }
+
+  const trimmed = q.trim();
+  const searchTerm = `%${trimmed}%`;
+  const isNumeric = /^\d+$/.test(trimmed);
+  const idValue = isNumeric ? parseInt(trimmed, 10) : null;
+
+  try {
+    let where;
+    let params;
+    if (isNumeric) {
+      where = `(u.id = ? OR u.name LIKE ? OR u.email LIKE ?)`;
+      params = [idValue, searchTerm, searchTerm];
+    } else {
+      where = `(u.name LIKE ? OR u.email LIKE ?)`;
+      params = [searchTerm, searchTerm];
+    }
+
+    const [rows] = await db.promise().query(
+      `SELECT u.id, u.name, u.email, m.name AS major_name
+       FROM users u
+       JOIN students s ON s.user_id = u.id
+       LEFT JOIN majors m ON s.major_id = m.id
+       WHERE u.role = 'student' AND u.status = 'active'
+         AND ${where}
+       ORDER BY u.name
+       LIMIT 10`,
+      params
+    );
+
+    return res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Search students for discount error:', error);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
 module.exports = {
   // credit pricing
   getCurrentCreditPrices,
@@ -544,4 +918,12 @@ module.exports = {
   updateFeeType,
   getFeePricingHistory,
   updateFeePrice,
+  // discount management
+  getDiscountTypes,
+  createDiscountType,
+  updateDiscountType,
+  getStudentDiscounts,
+  awardDiscount,
+  cancelStudentDiscount,
+  searchStudentsForDiscount,
 };

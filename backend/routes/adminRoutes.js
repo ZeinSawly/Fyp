@@ -54,6 +54,13 @@ const {
     updateFeeType,
     getFeePricingHistory,
     updateFeePrice,
+    getDiscountTypes,
+    createDiscountType,
+    updateDiscountType,
+    getStudentDiscounts,
+    awardDiscount,
+    cancelStudentDiscount,
+    searchStudentsForDiscount,
   } = require('../controllers/pricingController');
 
 const { verifyToken } = require('../middlewares/authMiddleware');
@@ -147,5 +154,24 @@ router.put('/fee-types/:id', updateFeeType);
 router.get('/fee-pricing/history', getFeePricingHistory);
 router.put('/fee-pricing', updateFeePrice);
 
+
+// ============================================
+// DISCOUNT TYPES
+// ============================================
+router.get('/discount-types', getDiscountTypes);
+router.post('/discount-types', createDiscountType);
+router.put('/discount-types/:id', updateDiscountType);
+
+// ============================================
+// STUDENT DISCOUNTS (awards)
+// ============================================
+router.get('/student-discounts', getStudentDiscounts);
+router.post('/student-discounts', awardDiscount);
+router.put('/student-discounts/:id/cancel', cancelStudentDiscount);
+
+// ============================================
+// STUDENT SEARCH (for discount award)
+// ============================================
+router.get('/students/search', searchStudentsForDiscount);
 
 module.exports = router;
