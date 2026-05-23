@@ -49,6 +49,11 @@ const {
     getCurrentCreditPrices,
     getCreditPricingHistory,
     updateCreditPrice,
+    getFeeTypes,
+    createFeeType,
+    updateFeeType,
+    getFeePricingHistory,
+    updateFeePrice,
   } = require('../controllers/pricingController');
 
 const { verifyToken } = require('../middlewares/authMiddleware');
@@ -131,6 +136,16 @@ router.delete('/semesters/:id', deleteSemester);
 router.get('/credit-pricing/current', getCurrentCreditPrices);
 router.get('/credit-pricing/history', getCreditPricingHistory);
 router.put('/credit-pricing', updateCreditPrice);
+
+
+// ============================================
+// FEE MANAGEMENT
+// ============================================
+router.get('/fee-types', getFeeTypes);
+router.post('/fee-types', createFeeType);
+router.put('/fee-types/:id', updateFeeType);
+router.get('/fee-pricing/history', getFeePricingHistory);
+router.put('/fee-pricing', updateFeePrice);
 
 
 module.exports = router;

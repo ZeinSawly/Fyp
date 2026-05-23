@@ -19,6 +19,8 @@ import CourseManagement from './Pages/Admin/CourseManagement';
 import EditCourse from './Pages/Admin/EditCourse';
 import SemesterManagement from './Pages/Admin/SemesterManagement';
 import CreditPricing from './Pages/Admin/CreditPricing';
+import FeeManagement from './Pages/Admin/FeeManagement';
+
 
 
 
@@ -93,6 +95,11 @@ export default function App() {
         {/* Credit Pricing */}
         <Route path="/admin/credit-pricing" element={
           <PrivateRoute role="admin"><CreditPricing /></PrivateRoute>
+        } />
+
+        {/* Fee Management */}
+        <Route path="/admin/fee-management" element={
+          <PrivateRoute role="admin"><FeeManagement /></PrivateRoute>
         } />
 
         {/* Finance Officer Portal Routes */}

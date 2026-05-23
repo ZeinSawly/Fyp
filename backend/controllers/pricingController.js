@@ -214,8 +214,334 @@ const updateCreditPrice = async (req, res) => {
   }
 };
 
+// ============================================================
+// FEE TYPES
+// ============================================================
+
+// GET /api/admin/fee-types
+const getFeeTypes = async (req, res) => {
+  try {
+    const [rows] = await db.promise().query(
+      `SELECT 
+          ft.id,
+          ft.code,
+          ft.name,
+          ft.description,
+          ft.charge_basis,
+          ft.is_active,
+          -- Include current price (if any)
+          (SELECT amount FROM fee_pricing fp
+           WHERE fp.fee_type_id = ft.id
+             AND fp.major_id IS NULL
+             AND fp.effective_from <= CURDATE()
+             AND (fp.effective_until IS NULL OR fp.effective_until >= CURDATE())
+           LIMIT 1) AS current_amount,
+          (SELECT effective_from FROM fee_pricing fp
+           WHERE fp.fee_type_id = ft.id
+             AND fp.major_id IS NULL
+             AND fp.effective_from <= CURDATE()
+             AND (fp.effective_until IS NULL OR fp.effective_until >= CURDATE())
+           LIMIT 1) AS current_effective_from
+       FROM fee_types ft
+       ORDER BY ft.is_active DESC, ft.name ASC`
+    );
+
+    return res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Get fee types error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/admin/fee-types
+const createFeeType = async (req, res) => {
+  const { code, name, description, charge_basis } = req.body;
+
+  if (!code || !name || !charge_basis) {
+    return res.status(400).json({
+      success: false,
+      message: 'code, name, and charge_basis are required',
+    });
+  }
+
+  const validBases = ['per_semester', 'one_time', 'on_demand'];
+  if (!validBases.includes(charge_basis)) {
+    return res.status(400).json({
+      success: false,
+      message: `charge_basis must be one of: ${validBases.join(', ')}`,
+    });
+  }
+
+  try {
+    const codeUpper = code.toUpperCase().trim();
+
+    // Check for duplicate code
+    const [existing] = await db.promise().query(
+      `SELECT id FROM fee_types WHERE code = ?`,
+      [codeUpper]
+    );
+
+    if (existing.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `A fee type with code "${codeUpper}" already exists`,
+      });
+    }
+
+    await db.promise().query(
+      `INSERT INTO fee_types (code, name, description, charge_basis, is_active)
+       VALUES (?, ?, ?, ?, 1)`,
+      [codeUpper, name.trim(), description || null, charge_basis]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: 'Fee type created successfully',
+    });
+  } catch (error) {
+    console.error('Create fee type error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+};
+
+// PUT /api/admin/fee-types/:id
+const updateFeeType = async (req, res) => {
+  const { id } = req.params;
+  const { name, description, charge_basis, is_active } = req.body;
+
+  if (!name || !charge_basis) {
+    return res.status(400).json({
+      success: false,
+      message: 'name and charge_basis are required',
+    });
+  }
+
+  try {
+    const [existing] = await db.promise().query(
+      `SELECT id FROM fee_types WHERE id = ?`,
+      [id]
+    );
+
+    if (existing.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Fee type not found',
+      });
+    }
+
+    await db.promise().query(
+      `UPDATE fee_types 
+       SET name = ?, description = ?, charge_basis = ?, is_active = ?
+       WHERE id = ?`,
+      [
+        name.trim(),
+        description || null,
+        charge_basis,
+        is_active === undefined ? 1 : (is_active ? 1 : 0),
+        id,
+      ]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Fee type updated successfully',
+    });
+  } catch (error) {
+    console.error('Update fee type error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+};
+
+// ============================================================
+// FEE PRICING
+// ============================================================
+
+// GET /api/admin/fee-pricing/history?fee_type_id=X
+const getFeePricingHistory = async (req, res) => {
+  const { fee_type_id } = req.query;
+
+  try {
+    const params = [];
+    let whereClause = 'WHERE fp.major_id IS NULL';
+    if (fee_type_id) {
+      whereClause += ' AND fp.fee_type_id = ?';
+      params.push(fee_type_id);
+    }
+
+    const [rows] = await db.promise().query(
+      `SELECT 
+          fp.id,
+          fp.fee_type_id,
+          fp.amount,
+          fp.effective_from,
+          fp.effective_until,
+          fp.created_at,
+          ft.code AS fee_code,
+          ft.name AS fee_name,
+          CASE 
+            WHEN fp.effective_from <= CURDATE() 
+                 AND (fp.effective_until IS NULL OR fp.effective_until >= CURDATE())
+            THEN 1 ELSE 0
+          END AS is_active
+       FROM fee_pricing fp
+       JOIN fee_types ft ON fp.fee_type_id = ft.id
+       ${whereClause}
+       ORDER BY ft.name, fp.effective_from DESC`,
+      params
+    );
+
+    return res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Get fee pricing history error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+};
+
+// PUT /api/admin/fee-pricing
+// Sets a new price for a fee_type (handles effective dating)
+const updateFeePrice = async (req, res) => {
+  const { fee_type_id, amount, effective_from } = req.body;
+
+  if (!fee_type_id || amount === undefined || !effective_from) {
+    return res.status(400).json({
+      success: false,
+      message: 'fee_type_id, amount, and effective_from are required',
+    });
+  }
+
+  const amountNum = Number(amount);
+  if (isNaN(amountNum) || amountNum < 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Amount must be a non-negative number',
+    });
+  }
+
+  const connection = await db.promise().getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // Verify fee_type exists
+    const [feeCheck] = await connection.query(
+      `SELECT id FROM fee_types WHERE id = ?`,
+      [fee_type_id]
+    );
+
+    if (feeCheck.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Fee type not found',
+      });
+    }
+
+    // Find current active price (major_id NULL = applies to all)
+    const [currentRows] = await connection.query(
+      `SELECT id, effective_from, amount
+       FROM fee_pricing
+       WHERE fee_type_id = ?
+         AND major_id IS NULL
+         AND effective_from <= CURDATE()
+         AND (effective_until IS NULL OR effective_until >= CURDATE())
+       FOR UPDATE`,
+      [fee_type_id]
+    );
+
+    const newEffectiveDate = new Date(effective_from);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (newEffectiveDate < today) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'effective_from cannot be in the past',
+      });
+    }
+
+    if (currentRows.length > 0) {
+      const current = currentRows[0];
+
+      if (new Date(effective_from) <= new Date(current.effective_from)) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'New effective date must be after the current price\'s effective date',
+        });
+      }
+
+      if (Number(current.amount) === amountNum) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'New amount is the same as the current price',
+        });
+      }
+
+      // Close current
+      const newFromDate = new Date(effective_from);
+      const closeDate = new Date(newFromDate);
+      closeDate.setDate(closeDate.getDate() - 1);
+
+      await connection.query(
+        `UPDATE fee_pricing SET effective_until = ? WHERE id = ?`,
+        [closeDate.toISOString().split('T')[0], current.id]
+      );
+    }
+
+    // Insert new price
+    await connection.query(
+      `INSERT INTO fee_pricing 
+         (fee_type_id, major_id, amount, effective_from, effective_until)
+       VALUES (?, NULL, ?, ?, NULL)`,
+      [fee_type_id, amountNum, effective_from]
+    );
+
+    await connection.commit();
+
+    return res.status(201).json({
+      success: true,
+      message: 'Fee price updated successfully',
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Update fee price error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
+  // credit pricing
   getCurrentCreditPrices,
   getCreditPricingHistory,
   updateCreditPrice,
+  // fee management
+  getFeeTypes,
+  createFeeType,
+  updateFeeType,
+  getFeePricingHistory,
+  updateFeePrice,
 };

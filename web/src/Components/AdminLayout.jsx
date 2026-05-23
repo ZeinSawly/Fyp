@@ -4,7 +4,7 @@ import {
   DashboardOutlined, UserAddOutlined, UserDeleteOutlined,
   TeamOutlined, DollarOutlined, BookOutlined,
   MenuUnfoldOutlined, BankOutlined, SafetyCertificateOutlined,
-  BellOutlined, CalendarOutlined, LogoutOutlined, MenuFoldOutlined
+  BellOutlined, CalendarOutlined, LogoutOutlined, MenuFoldOutlined, TagOutlined
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -61,7 +61,7 @@ export default function AdminLayout({ children, title = 'Dashboard' }) {
       key: 'finance', icon: <DollarOutlined />, label: 'Finance',
       children: [
         { key: '/admin/credit-pricing', icon: <DollarOutlined />, label: 'Credit Pricing' },
-        // Fee Management and Discount Management will go here next
+        { key: '/admin/fee-management', icon: <TagOutlined />, label: 'Fee Management' },
       ],
     },
   ];
