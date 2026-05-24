@@ -3,12 +3,29 @@ const db = require('../config/db');
 // Get students enrolled in a section + their attendance for a specific session and date
 const getSectionStudents = async (req, res) => {
   const { section_id, schedule_id, date } = req.query;
+  const instructor_id = req.user?.id;
 
   if (!section_id || !schedule_id || !date) {
-    return res.status(400).json({ success: false, message: 'section_id, schedule_id and date are required' });
+    return res.status(400).json({ 
+      success: false, 
+      message: 'section_id, schedule_id and date are required' 
+    });
   }
 
   try {
+    // Verify instructor owns this section
+    const [ownership] = await db.promise().query(
+      `SELECT id FROM course_sections WHERE id = ? AND instructor_id = ?`,
+      [section_id, instructor_id]
+    );
+
+    if (ownership.length === 0) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'You do not have access to this section' 
+      });
+    }
+
     const [students] = await db.promise().query(
       `SELECT 
         u.id AS student_id,
@@ -18,15 +35,15 @@ const getSectionStudents = async (req, res) => {
        JOIN users u ON ce.student_id = u.id
        LEFT JOIN attendance a 
          ON a.student_id = u.id 
+         AND a.section_id = ?
          AND a.schedule_id = ?
          AND a.date = ?
        WHERE ce.section_id = ?
        ORDER BY u.name ASC`,
-      [schedule_id, date, section_id]
+      [section_id, schedule_id, date, section_id]
     );
 
     return res.status(200).json({ success: true, data: students });
-
   } catch (error) {
     console.error('Get section students error:', error);
     return res.status(500).json({ success: false, message: 'Server error', error: error.message });
@@ -36,16 +53,29 @@ const getSectionStudents = async (req, res) => {
 // Get sessions (schedules) for a section on a specific day
 const getSectionSessions = async (req, res) => {
   const { section_id, date } = req.query;
+  const instructor_id = req.user?.id;
 
   if (!section_id || !date) {
-    return res.status(400).json({ success: false, message: 'section_id and date are required' });
+    return res.status(400).json({ 
+      success: false, 
+      message: 'section_id and date are required' 
+    });
   }
 
-  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const dayOfWeek = dayNames[new Date(date).getDay()];
-
   try {
-    // Get day of week from date
+    // Verify ownership
+    const [ownership] = await db.promise().query(
+      `SELECT id FROM course_sections WHERE id = ? AND instructor_id = ?`,
+      [section_id, instructor_id]
+    );
+
+    if (ownership.length === 0) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'You do not have access to this section' 
+      });
+    }
+
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const dayOfWeek = dayNames[new Date(date).getDay()];
 
@@ -65,50 +95,96 @@ const getSectionSessions = async (req, res) => {
     );
 
     return res.status(200).json({ success: true, data: sessions });
-
-    
-
   } catch (error) {
     console.error('Get section sessions error:', error);
     return res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// Submit attendance for a session
+// Submit attendance for a session (transactional, all-or-nothing)
 const submitAttendance = async (req, res) => {
-  const { section_id, schedule_id, date, attendance, recorded_by } = req.body;
-  // attendance = [{ student_id, status: 'present'|'absent' }, ...]
+  const { section_id, schedule_id, date, attendance } = req.body;
+  const recorded_by = req.user?.id;
 
-  if (!section_id || !schedule_id || !date || !attendance || !recorded_by) {
-    return res.status(400).json({ success: false, message: 'All fields are required' });
+  if (!recorded_by) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
 
+  if (!section_id || !schedule_id || !date || !attendance) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'section_id, schedule_id, date, and attendance are required' 
+    });
+  }
+
+  const connection = await db.promise().getConnection();
+
   try {
-    // Upsert attendance for each student
-    const promises = attendance.map(({ student_id, status }) =>
-      db.promise().query(
+    await connection.beginTransaction();
+
+    // Verify ownership
+    const [ownership] = await connection.query(
+      `SELECT id FROM course_sections WHERE id = ? AND instructor_id = ?`,
+      [section_id, recorded_by]
+    );
+
+    if (ownership.length === 0) {
+      await connection.rollback();
+      return res.status(403).json({ 
+        success: false, 
+        message: 'You do not have access to this section' 
+      });
+    }
+
+    // Upsert each attendance record within the transaction
+    for (const { student_id, status } of attendance) {
+      await connection.query(
         `INSERT INTO attendance (student_id, section_id, schedule_id, date, status, recorded_by)
          VALUES (?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE status = VALUES(status), recorded_by = VALUES(recorded_by)`,
         [student_id, section_id, schedule_id, date, status, recorded_by]
-      )
-    );
+      );
+    }
 
-    await Promise.all(promises);
+    await connection.commit();
 
-    return res.status(200).json({ success: true, message: 'Attendance submitted successfully' });
-
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Attendance submitted successfully',
+      count: attendance.length,
+    });
   } catch (error) {
+    await connection.rollback();
     console.error('Submit attendance error:', error);
-    return res.status(500).json({ success: false, message: 'Server error', error: error.message });
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: error.message 
+    });
+  } finally {
+    connection.release();
   }
 };
 
 // Get absence count per student for a section
 const getAbsenceSummary = async (req, res) => {
   const { section_id } = req.params;
+  const instructor_id = req.user?.id;
 
   try {
+    // Verify ownership
+    const [ownership] = await db.promise().query(
+      `SELECT id FROM course_sections WHERE id = ? AND instructor_id = ?`,
+      [section_id, instructor_id]
+    );
+
+    if (ownership.length === 0) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'You do not have access to this section' 
+      });
+    }
+
     const [summary] = await db.promise().query(
       `SELECT 
         u.id AS student_id,
@@ -125,7 +201,6 @@ const getAbsenceSummary = async (req, res) => {
     );
 
     return res.status(200).json({ success: true, data: summary });
-
   } catch (error) {
     console.error('Get absence summary error:', error);
     return res.status(500).json({ success: false, message: 'Server error', error: error.message });
@@ -147,18 +222,17 @@ const checkAttendanceExists = async (req, res) => {
 
     const exists = rows[0].count > 0;
     return res.status(200).json({ success: true, exists });
-
   } catch (error) {
     console.error('Check attendance error:', error);
     return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
+// Student-facing — no instructor check needed
 const getStudentAttendance = async (req, res) => {
   const { student_id } = req.params;
 
   try {
-    // Get all enrolled courses with absence count
     const [courses] = await db.promise().query(
       `SELECT 
         c.id AS course_id,
@@ -177,7 +251,6 @@ const getStudentAttendance = async (req, res) => {
     );
 
     return res.status(200).json({ success: true, data: courses });
-
   } catch (error) {
     console.error('Get student attendance error:', error);
     return res.status(500).json({ success: false, message: 'Server error' });
@@ -206,11 +279,18 @@ const getStudentAbsenceDetails = async (req, res) => {
     );
 
     return res.status(200).json({ success: true, data: absences });
-
   } catch (error) {
     console.error('Get absence details error:', error);
     return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
-module.exports = { getSectionStudents, getSectionSessions, submitAttendance, getAbsenceSummary, checkAttendanceExists, getStudentAttendance, getStudentAbsenceDetails };
+module.exports = { 
+  getSectionStudents, 
+  getSectionSessions, 
+  submitAttendance, 
+  getAbsenceSummary, 
+  checkAttendanceExists, 
+  getStudentAttendance, 
+  getStudentAbsenceDetails 
+};

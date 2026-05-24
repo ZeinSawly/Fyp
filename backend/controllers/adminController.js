@@ -156,74 +156,72 @@ const lookupStudent = async (req, res) => {
 const addInstructor = async (req, res) => {
   const { id, name, password, dob, department, email, phone } = req.body;
 
+  // Basic validation
+  if (!id || !name || !password || !email || !department) {
+    return res.status(400).json({
+      message: 'id, name, password, email, and department are required',
+    });
+  }
+
+  const connection = await db.promise().getConnection();
+
   try {
+    await connection.beginTransaction();
+
+    // 1. Verify department exists
+    const [deptRows] = await connection.query(
+      'SELECT id FROM departments WHERE id = ?',
+      [department]
+    );
+
+    if (deptRows.length === 0) {
+      await connection.rollback();
+      return res.status(400).json({ message: 'Invalid department' });
+    }
+
+    // 2. Check if a user with this ID already exists
+    const [userRows] = await connection.query(
+      'SELECT id FROM users WHERE id = ?',
+      [id]
+    );
+
+    if (userRows.length > 0) {
+      await connection.rollback();
+      return res.status(400).json({ message: 'Instructor already exists' });
+    }
+
+    // 3. Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    db.beginTransaction((err) => {
-      if (err) {
-        return res.status(500).json({ message: 'Transaction error', error: err });
-      }
+    // 4. Insert into users
+    await connection.query(
+      `INSERT INTO users (id, name, password, role, dob, email, phone, status)
+       VALUES (?, ?, ?, 'instructor', ?, ?, ?, 'active')`,
+      [id, name, hashedPassword, dob || null, email, phone || null]
+    );
 
-      const rollback = (error) => {
-        console.error(error);
-        db.rollback(() => {
-          return res.status(500).json({
-            message: 'Transaction failed',
-            error,
-          });
-        });
-      };
+    // 5. Insert into instructors
+    await connection.query(
+      `INSERT INTO instructors (user_id, department) VALUES (?, ?)`,
+      [id, department]
+    );
 
-      const checkDepartmentSql = 'SELECT * FROM departments WHERE id = ?';
-      db.query(checkDepartmentSql, [department], (err1, deptRows) => {
-        if (err1) return rollback(err1);
+    await connection.commit();
 
-        if (deptRows.length === 0) {
-          return db.rollback(() =>
-            res.status(400).json({ message: 'Invalid department' })
-          );
-        }
-
-        const checkUserSql = 'SELECT * FROM users WHERE id = ?';
-        db.query(checkUserSql, [id], (err2, userRows) => {
-          if (err2) return rollback(err2);
-
-          if (userRows.length > 0) {
-            return db.rollback(() =>
-              res.status(400).json({ message: 'Instructor already exists' })
-            );
-          }
-
-          const userSql =
-            'INSERT INTO users (id, name, password, role, dob, email, phone) VALUES (?, ?, ?, ?, ?, ?, ?)';
-
-          db.query(
-            userSql,
-            [id, name, hashedPassword, 'instructor', dob, email, phone],
-            (err3) => {
-              if (err3) return rollback(err3);
-
-              const instructorSql =
-                'INSERT INTO instructors (user_id, department) VALUES (?, ?)';
-
-              db.query(instructorSql, [id, department], (err4) => {
-                if (err4) return rollback(err4);
-
-                db.commit((err5) => {
-                  if (err5) return rollback(err5);
-
-                  return res.status(201).json({
-                    message: 'Instructor added successfully',
-                  });
-                });
-              });
-            }
-          );
-        });
-      });
+    return res.status(201).json({
+      message: 'Instructor added successfully',
     });
   } catch (error) {
-    return res.status(500).json({ message: 'Server error', error });
+    await connection.rollback();
+    console.error('Add instructor error:', error);
+    return res.status(500).json({
+      message: 'Server error',
+      error: error.message,
+      code: error.code,
+      sqlMessage: error.sqlMessage,
+    });
+  } finally {
+    connection.release();
   }
 };
 

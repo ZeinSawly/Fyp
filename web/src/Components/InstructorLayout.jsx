@@ -11,7 +11,7 @@ import {
   BookOutlined,
   CalendarOutlined,
   SafetyCertificateOutlined,
-  BarChartOutlined,
+  BarChartOutlined,   TrophyOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -46,6 +46,7 @@ export default function InstructorLayout({ children, title = 'Dashboard' }) {
       label: 'Grades',
       children: [
         { key: '/instructor/grades/manage', icon: <BookOutlined />, label: 'Manage Grades' },
+        { key: '/instructor/grades/finalize', icon: <TrophyOutlined />, label: 'Finalize Grades' },
       ],
     },
     { key: '/instructor/schedule', icon: <CalendarOutlined />, label: 'My Schedule' },

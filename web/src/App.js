@@ -23,6 +23,12 @@ import FeeManagement from './Pages/Admin/FeeManagement';
 import DiscountManagement from './Pages/Admin/DiscountManagement';
 
 
+import InstrcutorDashboard from './Pages/Instructor/InstrutorDashboard';
+import MarkAttendance from './Pages/Instructor/MarkAttendance';
+import AbsenceSummary from './Pages/Instructor/AbsenceSummary';
+import ManageGrades from './Pages/Instructor/ManageGrades';
+import FinalizeGrades from './Pages/Instructor/FinalizeGrades';
+import Schedule from './Pages/Instructor/Schedule';
 
 
 
@@ -48,10 +54,10 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        
+        {/* Admin Dashboard */}
         <Route path="/admin" element={
-          <PrivateRoute role="admin">
-            <AdminDashboard />
-          </PrivateRoute>
+          <PrivateRoute role="admin"><AdminDashboard /></PrivateRoute>
         } />
 
 
@@ -111,9 +117,7 @@ export default function App() {
 
         {/* Finance Officer Portal Routes */}
         <Route path="/finance" element={
-          <PrivateRoute role="finance_officer">
-            <FinanceDashboard />
-          </PrivateRoute>
+          <PrivateRoute role="finance_officer"><FinanceDashboard /></PrivateRoute>
         } />
 
         <Route path="/finance/student-summary" element={
@@ -138,6 +142,32 @@ export default function App() {
           <PrivateRoute role="finance_officer">
             <div>Payment Reports Page - Coming Soon</div>
           </PrivateRoute>
+        } />
+
+        {/* Instructor Portal Routes */}
+
+        <Route path="/instructor" element={
+          <PrivateRoute role="instructor"><InstrcutorDashboard /></PrivateRoute>
+        } />
+
+        <Route path="/instructor/attendance/mark" element={
+          <PrivateRoute role="instructor"><MarkAttendance /></PrivateRoute>
+        } />
+
+        <Route path="/instructor/attendance/summary" element={
+          <PrivateRoute role="instructor"><AbsenceSummary /></PrivateRoute>
+        } />
+
+        <Route path="/instructor/grades/manage" element={
+          <PrivateRoute role="instructor"><ManageGrades /></PrivateRoute>
+        } />
+
+        <Route path="/instructor/grades/finalize" element={
+          <PrivateRoute role="instructor"><FinalizeGrades /></PrivateRoute>
+        } />
+
+        <Route path="/instructor/schedule" element={
+          <PrivateRoute role="instructor"><Schedule /></PrivateRoute>
         } />
 
         <Route path="*" element={<Navigate to="/login" />} />

@@ -189,3 +189,20 @@ CREATE TABLE penalties (
   CONSTRAINT fk_penalty_transaction FOREIGN KEY (transaction_id) REFERENCES student_financial_transactions(id) ON DELETE CASCADE,
   CONSTRAINT fk_penalty_waived_by FOREIGN KEY (waived_by) REFERENCES users(id)
 );
+
+
+
+
+
+
+
+Added this to course_sections table for grades:
+
+ALTER TABLE course_sections
+ADD COLUMN grades_finalized TINYINT(1) NOT NULL DEFAULT 0,
+ADD COLUMN finalized_at TIMESTAMP NULL DEFAULT NULL,
+ADD COLUMN finalized_by INT NULL DEFAULT NULL,
+ADD CONSTRAINT fk_sections_finalized_by 
+  FOREIGN KEY (finalized_by) REFERENCES users(id);
+
+

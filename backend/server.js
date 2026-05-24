@@ -32,7 +32,7 @@ app.use('/api/students', verifyToken, studentRoutes);
 
 app.use('/api/admin', verifyToken, adminRoutes);
 
-app.use('/api/instructors', verifyToken, instructorRoutes);
+app.use('/api/instructor', verifyToken, instructorRoutes);
 
 app.use('/api/quiz', verifyToken, quizRoutes);
 
