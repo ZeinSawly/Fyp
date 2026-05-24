@@ -21,6 +21,7 @@ import SemesterManagement from './Pages/Admin/SemesterManagement';
 import CreditPricing from './Pages/Admin/CreditPricing';
 import FeeManagement from './Pages/Admin/FeeManagement';
 import DiscountManagement from './Pages/Admin/DiscountManagement';
+import GradeComponents from './Pages/Admin/GradeComponents';
 
 
 import InstrcutorDashboard from './Pages/Instructor/InstrutorDashboard';
@@ -113,6 +114,10 @@ export default function App() {
         {/* Discount Management */}
         <Route path="/admin/discount-management" element={
           <PrivateRoute role="admin"><DiscountManagement /></PrivateRoute>
+        } />
+
+        <Route path="/admin/grade-components" element={
+          <PrivateRoute role="admin"><GradeComponents /></PrivateRoute>
         } />
 
         {/* Finance Officer Portal Routes */}
