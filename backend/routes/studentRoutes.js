@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { getStudentSchedule } = require('../controllers/studScheduleController');
 const { getFinancialSummary, getStudentFinancialSemesters, getStudentPayments, getPaymentReceipt, } = require('../controllers/studentFinancialController');
-const {getCoursesForStudent, getCourseSchedule, addToCart, getStudentCart, removeCartItem, enrollCartItem, dropCourse, getEnrolledCourses, swapCourseWithCart, getEnrolledCoursesForSwap, getCartItemsForSwap, } = require('../controllers/studentCourseController');
+const {getCoursesForStudent, getCourseSchedule, addToCart, getStudentCart, removeCartItem, enrollCartItem, dropCourse, getEnrolledCourses, swapCourseWithCart, getEnrolledCoursesForSwap, getCartItemsForSwap, getStudentTranscript,} = require('../controllers/studentCourseController');
 const { getStudentAttendance, getStudentAbsenceDetails } = require('../controllers/attendanceController');
 const { getStudentGrades } = require('../controllers/gradeController');
 
@@ -43,5 +43,7 @@ router.get('/:student_id/attendance/:section_id', getStudentAbsenceDetails);
 // ========== GRADES ROUTES ==========
 router.get('/:student_id/grades', getStudentGrades);
 
+// ========== TRANSCRIPT ROUTE ==========
+router.get('/:student_id/transcript', getStudentTranscript);
 
 module.exports = router;

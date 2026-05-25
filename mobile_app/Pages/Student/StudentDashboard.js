@@ -15,8 +15,9 @@ export default function StudentDashboard({navigation, route}) {
     { name: 'wallet', color: '#FFA726', label: 'Financial Account', screen: 'FinancialAccount' },
     { name: 'ribbon-outline', color: '#8B5CF6', label: 'Grades', screen: 'StudentGrades' },
     { name: 'calendar-number-outline', color: '#EF5350', label: 'Attendance', screen: 'StudentAttendance' },
+    { name: 'document-text-outline', color: '#0EA5E9', label: 'Transcript', screen: 'Transcript' },
     { name: 'bulb-outline', color: '#F59E0B', label: 'Career Quiz', screen: 'QuizIntro' },
-    ];
+  ];
 
   return (
     <SafeAreaView style={styles.container}>

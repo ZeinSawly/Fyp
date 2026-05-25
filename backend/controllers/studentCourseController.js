@@ -1206,6 +1206,193 @@ const getCartItemsForSwap = async (req, res) => {
   }
 };
 
+const getStudentTranscript = async (req, res) => {
+  const { student_id } = req.params;
+
+  if (!student_id) {
+    return res.status(400).json({
+      success: false,
+      message: 'Student ID is required'
+    });
+  }
+
+  try {
+    // 1. Get student info + cumulative GPA from the students table
+    const [studentRows] = await db.promise().query(
+      `SELECT 
+          u.id AS student_id,
+          u.name AS student_name,
+          u.email,
+          s.enrollment_date,
+          s.gpa AS cumulative_gpa,
+          s.completed_credits,
+          m.name AS major_name,
+          m.total_credits_required,
+          m.degree_type,
+          d.name AS department_name
+       FROM users u
+       JOIN students s ON s.user_id = u.id
+       LEFT JOIN majors m ON s.major_id = m.id
+       LEFT JOIN departments d ON m.department_id = d.id
+       WHERE u.id = ? AND u.role = 'student'`,
+      [student_id]
+    );
+
+    if (studentRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student not found'
+      });
+    }
+
+    const student = studentRows[0];
+
+    // 2. Get all completions, grouped by semester
+    const [completions] = await db.promise().query(
+      `SELECT 
+          scc.id,
+          scc.course_id,
+          scc.section_id,
+          scc.semester_id,
+          scc.final_grade,
+          scc.letter_grade,
+          scc.grade_points,
+          scc.credits_earned,
+          scc.status,
+          scc.completed_at,
+          c.name AS course_name,
+          c.credits AS course_credits,
+          c.type AS course_type,
+          sec.section_code,
+          sem.name AS semester_name,
+          sem.term,
+          sem.academic_year,
+          sem.start_date AS semester_start
+       FROM student_course_completions scc
+       JOIN courses c ON scc.course_id = c.id
+       LEFT JOIN course_sections sec ON scc.section_id = sec.id
+       LEFT JOIN semesters sem ON scc.semester_id = sem.id
+       WHERE scc.student_id = ?
+       ORDER BY sem.start_date DESC, c.name ASC`,
+      [student_id]
+    );
+
+    // 3. Group by semester
+    const semesterMap = {};
+    completions.forEach(row => {
+      const key = row.semester_id || 'unknown';
+
+      if (!semesterMap[key]) {
+        semesterMap[key] = {
+          semester_id: row.semester_id,
+          semester_name: row.semester_name || 'Unknown Semester',
+          term: row.term,
+          academic_year: row.academic_year,
+          semester_start: row.semester_start,
+          courses: [],
+          semester_gpa: 0,
+          credits_earned: 0,
+          credits_attempted: 0,
+        };
+      }
+
+      semesterMap[key].courses.push({
+        course_id: row.course_id,
+        course_name: row.course_name,
+        course_credits: Number(row.course_credits || 0),
+        section_code: row.section_code,
+        final_grade: row.final_grade !== null ? Number(row.final_grade) : null,
+        letter_grade: row.letter_grade,
+        grade_points: row.grade_points !== null ? Number(row.grade_points) : null,
+        credits_earned: Number(row.credits_earned || 0),
+        status: row.status,
+        completed_at: row.completed_at,
+      });
+    });
+
+    // 4. Compute per-semester GPA (only count passed/failed, ignore in-progress and withdrawn)
+    Object.values(semesterMap).forEach(sem => {
+      let qualityPoints = 0;
+      let creditsAttempted = 0;
+      let creditsEarned = 0;
+
+      sem.courses.forEach(c => {
+        if (c.status === 'passed' || c.status === 'failed') {
+          const credits = Number(c.course_credits || 0);
+          const points = Number(c.grade_points || 0);
+          qualityPoints += points * credits;
+          creditsAttempted += credits;
+          if (c.status === 'passed') {
+            creditsEarned += Number(c.credits_earned || 0);
+          }
+        }
+      });
+
+      sem.semester_gpa = creditsAttempted > 0
+        ? Math.round((qualityPoints / creditsAttempted) * 100) / 100
+        : null;
+      sem.credits_attempted = creditsAttempted;
+      sem.credits_earned = creditsEarned;
+    });
+
+    // 5. Sort semesters by start_date DESC (most recent first)
+    const semesters = Object.values(semesterMap).sort((a, b) => {
+      if (!a.semester_start) return 1;
+      if (!b.semester_start) return -1;
+      return new Date(b.semester_start) - new Date(a.semester_start);
+    });
+
+    // 6. Overall stats
+    const stats = {
+      total_courses_taken: completions.filter(c => c.status === 'passed' || c.status === 'failed').length,
+      total_passed: completions.filter(c => c.status === 'passed').length,
+      total_failed: completions.filter(c => c.status === 'failed').length,
+      total_withdrawn: completions.filter(c => c.status === 'withdrawn').length,
+      total_in_progress: completions.filter(c => c.status === 'in_progress').length,
+    };
+
+    // Academic standing — simple rule
+    const gpa = Number(student.cumulative_gpa || 0);
+    let academic_standing = 'Good Standing';
+    if (gpa >= 3.7) academic_standing = 'Dean\'s List';
+    else if (gpa >= 3.5) academic_standing = 'Honors';
+    else if (gpa >= 2.0) academic_standing = 'Good Standing';
+    else if (gpa > 0) academic_standing = 'Academic Probation';
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        student: {
+          id: student.student_id,
+          name: student.student_name,
+          email: student.email,
+          enrollment_date: student.enrollment_date,
+          major_name: student.major_name,
+          department_name: student.department_name,
+          degree_type: student.degree_type,
+          total_credits_required: student.total_credits_required,
+        },
+        academic: {
+          cumulative_gpa: Number(student.cumulative_gpa || 0),
+          completed_credits: Number(student.completed_credits || 0),
+          credits_required: Number(student.total_credits_required || 0),
+          academic_standing,
+        },
+        stats,
+        semesters,
+      },
+    });
+
+  } catch (error) {
+    console.error('Get transcript error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+};
+
 // Detailed conflict check — returns info about the conflict, or null if no conflict
 const findDetailedConflict = (newSchedule, existingSchedules) => {
   if (!newSchedule || newSchedule.length === 0) return null;
@@ -1246,4 +1433,5 @@ module.exports = {
   swapCourseWithCart,             
   getEnrolledCoursesForSwap,      
   getCartItemsForSwap,
+  getStudentTranscript
 };

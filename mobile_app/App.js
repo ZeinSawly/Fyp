@@ -33,6 +33,8 @@ import QuizIntro from './Pages/Student/QuizIntro';
 import QuizScreen from './Pages/Student/QuizScreen';
 import QuizFeedback from './Pages/Student/QuizFeedback';
 import QuizResults from './Pages/Student/QuizResults';
+import Transcript from './Pages/Student/Transcript';
+
 
 import AdminDashboard from './Pages/Admin/AdminDashboard';
 import AddStudent from './Pages/Admin/AddStudent';
@@ -114,6 +116,7 @@ export default function App() {
         <Stack.Screen name="QuizScreen" component={QuizScreen} />
         <Stack.Screen name="QuizFeedback" component={QuizFeedback} />
         <Stack.Screen name="QuizResults" component={QuizResults} />
+        <Stack.Screen name="Transcript" component={Transcript}/>
 
         <Stack.Screen name="InstructorDashboard" component={InstructorDashboard} />
         <Stack.Screen name="InstructorSchedule" component={InstructorSchedule} />
