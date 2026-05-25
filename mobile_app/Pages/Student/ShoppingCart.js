@@ -117,32 +117,70 @@ export default function ShoppingCart({ route, navigation }) {
 
   const handleEnrollSelected = async () => {
     setEnrollingKey('bulk');
-
-    try {
-      const selectedData = items.filter(item =>
-        selectedItems.includes(`${item.course_id}-${item.section_id}`)
-      );
-
-      const promises = selectedData.map(item =>
+  
+    const selectedData = items.filter(item =>
+      selectedItems.includes(`${item.course_id}-${item.section_id}`)
+    );
+  
+    if (selectedData.length === 0) {
+      setEnrollingKey(null);
+      return;
+    }
+  
+    // Use Promise.allSettled — never rejects, returns per-item results
+    const results = await Promise.allSettled(
+      selectedData.map(item =>
         api.post('/api/students/cart/enroll', {
           student_id: student.id,
           course_id: item.course_id,
           section_id: item.section_id,
-        }).then(res => res.data)
-      );
-
-      const results = await Promise.all(promises);
-      const successCount = results.filter(r => r.success).length;
-
-      Alert.alert('Result', `Successfully enrolled in ${successCount} course(s)`);
-
-      fetchCart();
-      setSelectedItems([]);
-    } catch (error) {
-      Alert.alert('Error', 'Enrollment failed');
-    } finally {
-      setEnrollingKey(null);
+        })
+      )
+    );
+  
+    // Categorize results
+    const succeeded = [];
+    const failed = [];
+  
+    results.forEach((result, idx) => {
+      const item = selectedData[idx];
+      const itemLabel = `${item.course_name} (${item.section_code})`;
+  
+      if (result.status === 'fulfilled' && result.value.data.success) {
+        succeeded.push(itemLabel);
+      } else {
+        // Extract the error message from the backend's response
+        const errMsg = result.status === 'rejected'
+          ? (result.reason.response?.data?.message || result.reason.message || 'Unknown error')
+          : (result.value.data.message || 'Unknown error');
+        failed.push({ label: itemLabel, reason: errMsg });
+      }
+    });
+  
+    // Build a clear summary message
+    let summary = '';
+    if (succeeded.length > 0) {
+      summary += `Enrolled: ${succeeded.length}\n${succeeded.map(s => '  ✓ ' + s).join('\n')}`;
     }
+    if (failed.length > 0) {
+      if (summary) summary += '\n\n';
+      summary += `Failed: ${failed.length}\n${failed.map(f => '  ✗ ' + f.label + '\n    ' + f.reason).join('\n')}`;
+    }
+  
+    Alert.alert(
+      succeeded.length > 0 && failed.length === 0
+        ? 'All enrolled!'
+        : failed.length > 0 && succeeded.length === 0
+          ? 'Enrollment Failed'
+          : 'Partial Success',
+      summary
+    );
+  
+    // Refresh the cart from server — succeeded items will be gone from DB,
+    // failed items will still be in the cart (because backend rolled back)
+    await fetchCart();
+    setSelectedItems([]);
+    setEnrollingKey(null);
   };
 
   const renderItem = ({ item }) => {

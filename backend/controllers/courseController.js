@@ -260,45 +260,76 @@ const addCourseSection = async (req, res) => {
 
 const getCoursesBySemester = async (req, res) => {
   const { semester_id, student_id } = req.query;
-  
+
+  if (!semester_id) {
+    return res.status(400).json({
+      success: false,
+      message: 'semester_id is required',
+    });
+  }
+
   try {
-      // Get semester details
-      const [semester] = await db.promise().query(
-          `SELECT * FROM semesters WHERE id = ?`, [semester_id]
-      );
-      if (semester.length === 0) {
-          return res.status(404).json({ success: false, message: 'Semester not found' });
-      }
-      
-      const term = semester[0].term;
-      
-      // Get courses offered in this semester (based on offered_in)
-      const [courses] = await db.promise().query(
-          `SELECT c.id, c.name, c.description, c.credits, c.type, c.offered_in, c.major_id,
-                  m.name as major_name,
-                  CASE 
-                      WHEN EXISTS (
-                          SELECT 1 FROM course_sections cs 
-                          JOIN course_enrollments ce ON cs.id = ce.section_id 
-                          WHERE cs.course_id = c.id AND ce.student_id = ? AND cs.semester_id = ?
-                      ) THEN 'enrolled'
-                      WHEN EXISTS (
-                          SELECT 1 FROM shopping_cart sc 
-                          JOIN course_sections cs ON sc.section_id = cs.id
-                          WHERE cs.course_id = c.id AND sc.student_id = ? AND cs.semester_id = ?
-                      ) THEN 'in_cart'
-                      ELSE 'available'
-                  END AS status
-           FROM courses c
-           LEFT JOIN majors m ON c.major_id = m.id
-           WHERE c.offered_in IN (?, 'Both')
-           ORDER BY c.name`,
-          [student_id || null, semester_id, student_id || null, semester_id, term]
-      );
-      
-      return res.status(200).json({ success: true, data: courses, semester: semester[0] });
+    // Get semester details
+    const [semester] = await db.promise().query(
+      `SELECT * FROM semesters WHERE id = ?`,
+      [semester_id]
+    );
+    if (semester.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Semester not found',
+      });
+    }
+
+    // Get courses that have at least one section in this semester
+    const [courses] = await db.promise().query(
+      `SELECT 
+          c.id, c.name, c.description, c.credits, c.type, c.major_id,
+          m.name AS major_name,
+          CASE 
+            WHEN EXISTS (
+              SELECT 1 FROM course_sections cs 
+              JOIN course_enrollments ce ON cs.id = ce.section_id 
+              WHERE cs.course_id = c.id 
+                AND ce.student_id = ? 
+                AND cs.semester_id = ?
+            ) THEN 'enrolled'
+            WHEN EXISTS (
+              SELECT 1 FROM shopping_cart sc 
+              JOIN course_sections cs ON sc.section_id = cs.id
+              WHERE cs.course_id = c.id 
+                AND sc.student_id = ? 
+                AND cs.semester_id = ?
+            ) THEN 'in_cart'
+            ELSE 'available'
+          END AS status
+       FROM courses c
+       LEFT JOIN majors m ON c.major_id = m.id
+       WHERE EXISTS (
+         SELECT 1 FROM course_sections cs 
+         WHERE cs.course_id = c.id 
+           AND cs.semester_id = ?
+       )
+       ORDER BY c.name`,
+      [
+        student_id || null, semester_id,   // for "enrolled" check
+        student_id || null, semester_id,   // for "in_cart" check
+        semester_id,                       // for "offered in semester" filter
+      ]
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: courses,
+      semester: semester[0],
+    });
   } catch (error) {
-      return res.status(500).json({ success: false, message: 'Server error' });
+    console.error('Get courses by semester error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
   }
 };
 
@@ -320,17 +351,21 @@ const getAllInstructors = async (req, res) => {
 };
 
 // ─── ADD COURSE SCHEDULE ───
+// ─── ADD COURSE SCHEDULE ───
 const addCourseSchedule = async (req, res) => {
   const { section_id, day_of_week, start_time, end_time, room, building } = req.body;
 
   if (!section_id || !day_of_week || !start_time || !end_time) {
-    return res.status(400).json({ message: 'section_id, day_of_week, start_time and end_time are required' });
+    return res.status(400).json({ 
+      message: 'section_id, day_of_week, start_time and end_time are required' 
+    });
   }
 
   try {
     // Check section exists
     const [section] = await db.promise().query(
-      `SELECT id FROM course_sections WHERE id = ?`, [section_id]
+      `SELECT id FROM course_sections WHERE id = ?`, 
+      [section_id]
     );
     if (section.length === 0) {
       return res.status(404).json({ message: 'Section not found' });
@@ -356,7 +391,37 @@ const addCourseSchedule = async (req, res) => {
       return res.status(400).json({ message: 'End time must be after start time' });
     }
 
-    // Split into 2 sessions with 15-minute break
+    // ─── SHORT CLASS: single session, no split ───
+    const SHORT_CLASS_THRESHOLD = 90; // minutes — classes ≤ 90 min = single session
+
+    if (totalDuration <= SHORT_CLASS_THRESHOLD) {
+      await db.promise().query(
+        `INSERT INTO course_schedule (section_id, day_of_week, start_time, end_time, room, building)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          section_id, 
+          day_of_week, 
+          toTimeStr(startMinutes), 
+          toTimeStr(endMinutes), 
+          room || null, 
+          building || null
+        ]
+      );
+
+      return res.status(201).json({
+        message: 'Schedule added successfully — single session',
+        sessions: [
+          { 
+            session: 1, 
+            start: toTimeStr(startMinutes), 
+            end: toTimeStr(endMinutes),
+            duration_minutes: totalDuration,
+          },
+        ],
+      });
+    }
+
+    // ─── LONG CLASS: split into 2 sessions with a 15-min break ───
     const BREAK_DURATION = 15;
     const sessionDuration = Math.floor((totalDuration - BREAK_DURATION) / 2);
 
@@ -365,32 +430,58 @@ const addCourseSchedule = async (req, res) => {
     const session2Start = session1End + BREAK_DURATION;
     const session2End = endMinutes;
 
-
     // Insert session 1
     await db.promise().query(
       `INSERT INTO course_schedule (section_id, day_of_week, start_time, end_time, room, building)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [section_id, day_of_week, toTimeStr(session1Start), toTimeStr(session1End), room || null, building || null]
+      [
+        section_id, 
+        day_of_week, 
+        toTimeStr(session1Start), 
+        toTimeStr(session1End), 
+        room || null, 
+        building || null
+      ]
     );
 
     // Insert session 2
     await db.promise().query(
       `INSERT INTO course_schedule (section_id, day_of_week, start_time, end_time, room, building)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [section_id, day_of_week, toTimeStr(session2Start), toTimeStr(session2End), room || null, building || null]
+      [
+        section_id, 
+        day_of_week, 
+        toTimeStr(session2Start), 
+        toTimeStr(session2End), 
+        room || null, 
+        building || null
+      ]
     );
 
     return res.status(201).json({
-      message: 'Schedule added successfully — 2 sessions created',
+      message: 'Schedule added successfully — 2 sessions created with a 15-minute break',
       sessions: [
-        { session: 1, start: toTimeStr(session1Start), end: toTimeStr(session1End) },
-        { session: 2, start: toTimeStr(session2Start), end: toTimeStr(session2End) },
-      ]
+        { 
+          session: 1, 
+          start: toTimeStr(session1Start), 
+          end: toTimeStr(session1End),
+          duration_minutes: sessionDuration,
+        },
+        { 
+          session: 2, 
+          start: toTimeStr(session2Start), 
+          end: toTimeStr(session2End),
+          duration_minutes: sessionDuration,
+        },
+      ],
     });
 
   } catch (error) {
     console.error('Add schedule error:', error);
-    return res.status(500).json({ message: 'Server error', error: error.message });
+    return res.status(500).json({ 
+      message: 'Server error', 
+      error: error.message 
+    });
   }
 };
 

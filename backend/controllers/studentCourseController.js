@@ -392,13 +392,12 @@ const enrollCartItem = async (req, res) => {
     });
   }
 
-  // Get a dedicated connection from the pool
   const connection = await db.promise().getConnection();
 
   try {
     await connection.beginTransaction();
 
-    // 1. Check if item exists in cart
+    // ─── 1. Check the item is actually in cart ───
     const [cartRows] = await connection.query(
       `SELECT id FROM shopping_cart
        WHERE student_id = ? AND section_id = ? AND course_id = ?`,
@@ -413,49 +412,176 @@ const enrollCartItem = async (req, res) => {
       });
     }
 
-    // 2. Get section + semester info
+    // ─── 2. Get section + semester info (lock for update) ───
     const [sectionInfo] = await connection.query(
       `SELECT 
           cs.id, cs.course_id, cs.seats, cs.semester_id,
-          s.id as semester_db_id, s.is_current, s.enrollment_end_date,
-          s.is_active, s.name as semester_name, s.term, s.academic_year
+          s.is_active, s.enrollment_end_date,
+          s.name AS semester_name
        FROM course_sections cs
        LEFT JOIN semesters s ON cs.semester_id = s.id
-       WHERE cs.id = ?`,
+       WHERE cs.id = ? FOR UPDATE`,
       [section_id]
     );
 
     if (sectionInfo.length === 0) {
       await connection.rollback();
-      return res.status(404).json({ success: false, message: 'Section not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Section not found' 
+      });
     }
 
     const section = sectionInfo[0];
 
-    // ... (keep all your other validation checks the same) ...
+    // ─── 3. Check semester is active ───
+    if (section.is_active === 0) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Enrollment is closed for this semester'
+      });
+    }
 
-    // 11. Insert enrollment with semester_id
+    // ─── 4. Check enrollment deadline hasn't passed ───
+    if (section.enrollment_end_date) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const deadline = new Date(section.enrollment_end_date);
+      
+      if (today > deadline) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message: `Enrollment period for ${section.semester_name} has ended (closed on ${deadline.toLocaleDateString()})`
+        });
+      }
+    }
+
+    // ─── 5. Check seat availability ───
+    if (section.seats <= 0) {
+      await connection.rollback();
+      return res.status(409).json({
+        success: false,
+        message: 'This section is full'
+      });
+    }
+
+    // ─── 6. Check not already enrolled in another section of the same course ───
+    const [alreadyEnrolled] = await connection.query(
+      `SELECT ce.id 
+       FROM course_enrollments ce
+       JOIN course_sections cs ON ce.section_id = cs.id
+       WHERE ce.student_id = ? 
+         AND cs.course_id = ?
+         AND cs.semester_id = ?`,
+      [student_id, course_id, section.semester_id]
+    );
+
+    if (alreadyEnrolled.length > 0) {
+      await connection.rollback();
+      return res.status(409).json({
+        success: false,
+        message: 'You are already enrolled in this course (possibly a different section)'
+      });
+    }
+
+    // ─── 7. Check prerequisites ───
+    const [prerequisites] = await connection.query(
+      `SELECT prerequisite_id FROM course_prerequisites WHERE course_id = ?`,
+      [course_id]
+    );
+
+    if (prerequisites.length > 0) {
+      const prerequisiteIds = prerequisites.map(p => p.prerequisite_id);
+      
+      // Check completion table for passed prereqs
+      const [completedPrereqs] = await connection.query(
+        `SELECT DISTINCT course_id 
+         FROM student_course_completions
+         WHERE student_id = ? 
+           AND course_id IN (?)
+           AND status = 'passed'`,
+        [student_id, prerequisiteIds]
+      );
+
+      const completedIds = completedPrereqs.map(p => p.course_id);
+      const missingPrereqs = prerequisiteIds.filter(id => !completedIds.includes(id));
+
+      if (missingPrereqs.length > 0) {
+        const [missingNames] = await connection.query(
+          `SELECT id, name FROM courses WHERE id IN (?)`,
+          [missingPrereqs]
+        );
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message: `Missing prerequisites: ${missingNames.map(p => p.name).join(', ')}`,
+          data: { missing_prerequisites: missingNames }
+        });
+      }
+    }
+
+    // ─── 8. Check schedule conflict with already-enrolled sections ───
+    const [newSchedule] = await connection.query(
+      `SELECT day_of_week, start_time, end_time 
+       FROM course_schedule 
+       WHERE section_id = ?`,
+      [section_id]
+    );
+
+    const [existingSchedules] = await connection.query(
+      `SELECT 
+          c.name AS conflicting_course,
+          cs.section_code AS conflicting_section,
+          csched.day_of_week,
+          csched.start_time,
+          csched.end_time
+       FROM course_enrollments ce
+       JOIN course_sections cs ON ce.section_id = cs.id
+       JOIN courses c ON cs.course_id = c.id
+       JOIN course_schedule csched ON cs.id = csched.section_id
+       WHERE ce.student_id = ? 
+         AND ce.semester_id = ?`,
+      [student_id, section.semester_id]
+    );
+
+    // Detailed conflict check (returns the conflicting course info for a clearer error)
+    const conflictInfo = findDetailedConflict(newSchedule, existingSchedules);
+    
+    if (conflictInfo) {
+      await connection.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Schedule conflict with ${conflictInfo.conflicting_course} (${conflictInfo.conflicting_section}) on ${conflictInfo.day} at ${conflictInfo.existing_time}. This section meets at ${conflictInfo.attempted_time}.`,
+        data: { conflict: conflictInfo }
+      });
+    }
+
+    // ─── 9. All checks passed — perform the enrollment ───
+    
+    // Insert enrollment
     await connection.query(
       `INSERT INTO course_enrollments (student_id, section_id, semester_id, enrolled_at)
        VALUES (?, ?, ?, NOW())`,
       [student_id, section_id, section.semester_id]
     );
 
-    // 11b. Insert academic record (in_progress) - this is the "transcript" entry
+    // Insert academic record (in_progress)
     await connection.query(
       `INSERT INTO student_course_completions 
         (student_id, course_id, section_id, semester_id, status)
-      VALUES (?, ?, ?, ?, 'in_progress')`,
+       VALUES (?, ?, ?, ?, 'in_progress')`,
       [student_id, course_id, section_id, section.semester_id]
     );
 
-    // 12. Decrease capacity
+    // Decrease capacity
     await connection.query(
       `UPDATE course_sections SET seats = seats - 1 WHERE id = ?`,
       [section_id]
     );
 
-    // 13. Remove from cart
+    // Remove from cart
     await connection.query(
       `DELETE FROM shopping_cart
        WHERE student_id = ? AND section_id = ? AND course_id = ?`,
@@ -477,7 +603,7 @@ const enrollCartItem = async (req, res) => {
       message: 'Server error: ' + error.message
     });
   } finally {
-    connection.release();  // VERY IMPORTANT — return the connection to the pool
+    connection.release();
   }
 };
 
@@ -1078,6 +1204,34 @@ const getCartItemsForSwap = async (req, res) => {
       message: 'Server error'
     });
   }
+};
+
+// Detailed conflict check — returns info about the conflict, or null if no conflict
+const findDetailedConflict = (newSchedule, existingSchedules) => {
+  if (!newSchedule || newSchedule.length === 0) return null;
+
+  for (const newSession of newSchedule) {
+    for (const existing of existingSchedules) {
+      if (newSession.day_of_week !== existing.day_of_week) continue;
+
+      const newStart = new Date(`1970-01-01T${newSession.start_time}`);
+      const newEnd = new Date(`1970-01-01T${newSession.end_time}`);
+      const existingStart = new Date(`1970-01-01T${existing.start_time}`);
+      const existingEnd = new Date(`1970-01-01T${existing.end_time}`);
+
+      if (newStart < existingEnd && newEnd > existingStart) {
+        return {
+          conflicting_course: existing.conflicting_course,
+          conflicting_section: existing.conflicting_section,
+          day: existing.day_of_week,
+          existing_time: `${existing.start_time.slice(0, 5)}–${existing.end_time.slice(0, 5)}`,
+          attempted_time: `${newSession.start_time.slice(0, 5)}–${newSession.end_time.slice(0, 5)}`,
+        };
+      }
+    }
+  }
+
+  return null;
 };
 
 module.exports = {

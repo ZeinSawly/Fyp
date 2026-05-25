@@ -230,7 +230,8 @@ export default function CourseManagement() {
 
   const handleAddSchedule = async (values) => {
     setAddingSchedule(true);
-    setError(''); setSuccess('');
+    setError('');
+    setSuccess('');
     try {
       const res = await api.post('/api/admin/courses/schedule/add', {
         section_id: selectedSectionForSchedule,
@@ -240,10 +241,22 @@ export default function CourseManagement() {
         room: values.room,
         building: values.building,
       });
-      const { sessions } = res.data;
-      setSuccess(
-        `2 sessions created — Session 1: ${sessions[0].start}–${sessions[0].end}, Session 2: ${sessions[1].start}–${sessions[1].end}`
-      );
+  
+      const { sessions, message } = res.data;
+  
+      // Build success message dynamically — works for both 1-session and 2-session schedules
+      if (sessions && sessions.length === 1) {
+        setSuccess(
+          `Single session created — ${sessions[0].start}–${sessions[0].end}`
+        );
+      } else if (sessions && sessions.length === 2) {
+        setSuccess(
+          `2 sessions created — Session 1: ${sessions[0].start}–${sessions[0].end}, Session 2: ${sessions[1].start}–${sessions[1].end} (with 15-min break)`
+        );
+      } else {
+        setSuccess(message || 'Schedule added successfully');
+      }
+  
       scheduleForm.resetFields();
       fetchSchedule(selectedSectionForSchedule);
     } catch (err) {
