@@ -352,6 +352,7 @@ const getAllInstructors = async (req, res) => {
 
 // ─── ADD COURSE SCHEDULE ───
 // ─── ADD COURSE SCHEDULE ───
+// ─── ADD COURSE SCHEDULE ───
 const addCourseSchedule = async (req, res) => {
   const { section_id, day_of_week, start_time, end_time, room, building } = req.body;
 
@@ -362,16 +363,17 @@ const addCourseSchedule = async (req, res) => {
   }
 
   try {
-    // Check section exists
+    // 1. Check section exists + get its semester (for scoping the conflict check)
     const [section] = await db.promise().query(
-      `SELECT id FROM course_sections WHERE id = ?`, 
+      `SELECT id, semester_id FROM course_sections WHERE id = ?`, 
       [section_id]
     );
     if (section.length === 0) {
       return res.status(404).json({ message: 'Section not found' });
     }
+    const semesterId = section[0].semester_id;
 
-    // Parse start and end times into minutes
+    // Parse times into minutes
     const parseTime = (timeStr) => {
       const [h, m] = timeStr.split(':').map(Number);
       return h * 60 + m;
@@ -391,8 +393,58 @@ const addCourseSchedule = async (req, res) => {
       return res.status(400).json({ message: 'End time must be after start time' });
     }
 
-    // ─── SHORT CLASS: single session, no split ───
-    const SHORT_CLASS_THRESHOLD = 90; // minutes — classes ≤ 90 min = single session
+    // 2. ROOM CONFLICT CHECK
+    // Only if a room is specified
+    if (room) {
+      const fullStart = toTimeStr(startMinutes);
+      const fullEnd = toTimeStr(endMinutes);
+
+      // Find any existing schedule for the same room+day in the same semester
+      // that overlaps the full requested time block (we ignore the 15-min internal break
+      // since whoever is using the room "holds" it for the full block)
+      const [conflicts] = await db.promise().query(
+        `SELECT 
+            cs.id,
+            cs.start_time,
+            cs.end_time,
+            cs.day_of_week,
+            cs.section_id,
+            cs2.section_code,
+            c.id AS course_id,
+            c.name AS course_name
+         FROM course_schedule cs
+         JOIN course_sections cs2 ON cs.section_id = cs2.id
+         JOIN courses c ON cs2.course_id = c.id
+         WHERE cs.day_of_week = ?
+           AND cs.room = ?
+           ${building ? 'AND cs.building = ?' : 'AND (cs.building IS NULL OR cs.building = "" OR ? IS NULL)'}
+           AND cs2.semester_id = ?
+           AND cs.start_time < ?
+           AND cs.end_time > ?
+           AND cs.section_id != ?`,
+        building
+          ? [day_of_week, room, building, semesterId, fullEnd, fullStart, section_id]
+          : [day_of_week, room, null, semesterId, fullEnd, fullStart, section_id]
+      );
+
+      if (conflicts.length > 0) {
+        const c = conflicts[0];
+        return res.status(409).json({
+          success: false,
+          message: `Room conflict: ${room}${building ? ` (${building})` : ''} is already booked on ${day_of_week} from ${c.start_time.slice(0, 5)} to ${c.end_time.slice(0, 5)} by ${c.course_name} — Section ${c.section_code}`,
+          data: {
+            conflicting_course: c.course_name,
+            conflicting_section: c.section_code,
+            day: c.day_of_week,
+            existing_time: `${c.start_time.slice(0, 5)}–${c.end_time.slice(0, 5)}`,
+            attempted_time: `${fullStart}–${fullEnd}`,
+          },
+        });
+      }
+    }
+
+    // ─── SHORT CLASS: single session ───
+    const SHORT_CLASS_THRESHOLD = 90;
 
     if (totalDuration <= SHORT_CLASS_THRESHOLD) {
       await db.promise().query(
@@ -411,17 +463,12 @@ const addCourseSchedule = async (req, res) => {
       return res.status(201).json({
         message: 'Schedule added successfully — single session',
         sessions: [
-          { 
-            session: 1, 
-            start: toTimeStr(startMinutes), 
-            end: toTimeStr(endMinutes),
-            duration_minutes: totalDuration,
-          },
+          { session: 1, start: toTimeStr(startMinutes), end: toTimeStr(endMinutes), duration_minutes: totalDuration },
         ],
       });
     }
 
-    // ─── LONG CLASS: split into 2 sessions with a 15-min break ───
+    // ─── LONG CLASS: split into 2 sessions with break ───
     const BREAK_DURATION = 15;
     const sessionDuration = Math.floor((totalDuration - BREAK_DURATION) / 2);
 
@@ -430,49 +477,23 @@ const addCourseSchedule = async (req, res) => {
     const session2Start = session1End + BREAK_DURATION;
     const session2End = endMinutes;
 
-    // Insert session 1
     await db.promise().query(
       `INSERT INTO course_schedule (section_id, day_of_week, start_time, end_time, room, building)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        section_id, 
-        day_of_week, 
-        toTimeStr(session1Start), 
-        toTimeStr(session1End), 
-        room || null, 
-        building || null
-      ]
+      [section_id, day_of_week, toTimeStr(session1Start), toTimeStr(session1End), room || null, building || null]
     );
 
-    // Insert session 2
     await db.promise().query(
       `INSERT INTO course_schedule (section_id, day_of_week, start_time, end_time, room, building)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        section_id, 
-        day_of_week, 
-        toTimeStr(session2Start), 
-        toTimeStr(session2End), 
-        room || null, 
-        building || null
-      ]
+      [section_id, day_of_week, toTimeStr(session2Start), toTimeStr(session2End), room || null, building || null]
     );
 
     return res.status(201).json({
       message: 'Schedule added successfully — 2 sessions created with a 15-minute break',
       sessions: [
-        { 
-          session: 1, 
-          start: toTimeStr(session1Start), 
-          end: toTimeStr(session1End),
-          duration_minutes: sessionDuration,
-        },
-        { 
-          session: 2, 
-          start: toTimeStr(session2Start), 
-          end: toTimeStr(session2End),
-          duration_minutes: sessionDuration,
-        },
+        { session: 1, start: toTimeStr(session1Start), end: toTimeStr(session1End), duration_minutes: sessionDuration },
+        { session: 2, start: toTimeStr(session2Start), end: toTimeStr(session2End), duration_minutes: sessionDuration },
       ],
     });
 
