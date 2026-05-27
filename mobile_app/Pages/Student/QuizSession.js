@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
   TextInput, ActivityIndicator, Alert, KeyboardAvoidingView, Platform,
@@ -21,6 +21,22 @@ const STYLE_LABELS = {
   'conceptual': 'Conceptual',
 };
 
+// Time limits per difficulty (seconds)
+const TIME_LIMITS = {
+  easy: 60,
+  medium: 90,
+  hard: 120,
+};
+
+const getTimeLimit = (difficulty) => TIME_LIMITS[difficulty] || TIME_LIMITS.medium;
+
+// Format seconds as M:SS
+const formatTime = (seconds) => {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+};
+
 export default function QuizSession({ navigation, route }) {
   const { student, session } = route.params;
   const questions = session.questions || [];
@@ -30,10 +46,15 @@ export default function QuizSession({ navigation, route }) {
   const [selectedAnswer, setSelectedAnswer] = useState(null);
   const [explanation, setExplanation] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [feedback, setFeedback] = useState(null); // After submit: shows correct/wrong + reasoning score
+  const [feedback, setFeedback] = useState(null);
   const [completing, setCompleting] = useState(false);
 
-  // Track all submitted scores for the final summary
+  // Timer state
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [timeExpired, setTimeExpired] = useState(false);
+  const timerRef = useRef(null);
+  const submittingRef = useRef(false);  // prevents double-submit
+
   const [scoresSoFar, setScoresSoFar] = useState({
     correctCount: 0,
     totalReasoningScore: 0,
@@ -41,21 +62,75 @@ export default function QuizSession({ navigation, route }) {
   });
 
   const scrollRef = useRef(null);
-
   const currentQuestion = questions[currentIndex];
+  const totalTimeForQuestion = currentQuestion ? getTimeLimit(currentQuestion.difficulty) : 90;
   const progressPct = ((currentIndex + (feedback ? 1 : 0)) / totalQuestions) * 100;
 
-  const handleSubmit = async () => {
-    if (!selectedAnswer) {
-      Alert.alert('Pick an answer', 'Please select one of the options first.');
+  // Start/reset timer when question changes
+  useEffect(() => {
+    if (!currentQuestion || feedback) {
+      // No timer when showing feedback
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
       return;
     }
-    if (!explanation.trim() || explanation.trim().length < 10) {
-      Alert.alert(
-        'Explanation required',
-        'Please explain WHY you chose this answer in at least a sentence. This helps us detect understanding vs lucky guessing.'
-      );
-      return;
+
+    // New question — reset timer
+    const limit = getTimeLimit(currentQuestion.difficulty);
+    setSecondsLeft(limit);
+    setTimeExpired(false);
+
+    timerRef.current = setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (prev <= 1) {
+          // Time's up
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+          setTimeExpired(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [currentIndex, feedback]);
+
+  // Auto-submit when time expires
+  useEffect(() => {
+    if (timeExpired && !submittingRef.current && !feedback) {
+      submittingRef.current = true;
+      handleSubmit(true);  // pass autoSubmit flag
+    }
+  }, [timeExpired]);
+
+  const handleSubmit = async (autoSubmit = false) => {
+    // If manual submit, do validation
+    if (!autoSubmit) {
+      if (!selectedAnswer) {
+        Alert.alert('Pick an answer', 'Please select one of the options first.');
+        return;
+      }
+      if (!explanation.trim() || explanation.trim().length < 10) {
+        Alert.alert(
+          'Explanation required',
+          'Please explain WHY you chose this answer in at least a sentence.'
+        );
+        return;
+      }
+    }
+
+    // Stop the timer immediately on submit attempt
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
     }
 
     setSubmitting(true);
@@ -63,48 +138,51 @@ export default function QuizSession({ navigation, route }) {
       const res = await api.post('/api/quiz/submit-answer', {
         session_id: session.session_id,
         question_index: currentQuestion.index,
-        student_answer: selectedAnswer,
-        student_explanation: explanation.trim(),
+        // If auto-submitted with no answer, send "(no answer)" placeholder
+        student_answer: selectedAnswer || '(no answer)',
+        student_explanation: explanation.trim() || (autoSubmit ? '(time expired - no explanation)' : ''),
       });
 
       if (res.data.success) {
         const result = res.data.data;
-        setFeedback(result);
+        setFeedback({
+          ...result,
+          auto_submitted: autoSubmit,
+        });
 
-        // Update running totals
         setScoresSoFar(prev => ({
           correctCount: prev.correctCount + (result.is_correct ? 1 : 0),
           totalReasoningScore: prev.totalReasoningScore + result.reasoning_score,
           totalScore: prev.totalScore + result.total_score,
         }));
 
-        // Scroll to top to show feedback
         setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 100);
       } else {
         Alert.alert('Error', res.data.message || 'Submission failed');
+        submittingRef.current = false;
       }
     } catch (err) {
       Alert.alert(
         'Error',
         err.response?.data?.message || err.message || 'Submission failed'
       );
+      submittingRef.current = false;
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleNext = async () => {
-    // If this was the last question, complete the quiz
     if (currentIndex >= totalQuestions - 1) {
       await completeQuiz();
       return;
     }
 
-    // Move to next question
     setCurrentIndex(currentIndex + 1);
     setSelectedAnswer(null);
     setExplanation('');
     setFeedback(null);
+    submittingRef.current = false;
     setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 100);
   };
 
@@ -167,13 +245,22 @@ export default function QuizSession({ navigation, route }) {
 
   const difficultyStyle = DIFFICULTY_COLORS[currentQuestion.difficulty] || DIFFICULTY_COLORS.medium;
 
+  // Timer color based on percentage remaining
+  const timerPct = (secondsLeft / totalTimeForQuestion) * 100;
+  let timerColor = '#10B981'; // green
+  if (timerPct < 50) timerColor = '#F59E0B'; // yellow
+  if (timerPct < 25) timerColor = '#EF4444'; // red
+  
+  // Timer label
+  const isUrgent = secondsLeft <= 10 && !feedback;
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
       >
-        {/* Header with progress */}
+        {/* Header with progress + timer */}
         <View style={styles.header}>
           <View style={styles.headerTop}>
             <TouchableOpacity onPress={handleExitConfirm} style={styles.exitBtn}>
@@ -188,6 +275,38 @@ export default function QuizSession({ navigation, route }) {
           <View style={styles.progressBar}>
             <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
           </View>
+
+          {/* Timer (only shown when answering, not during feedback) */}
+          {!feedback && (
+            <View style={styles.timerContainer}>
+              <View style={styles.timerRow}>
+                <View style={styles.timerLabelWrap}>
+                  <Ionicons 
+                    name={isUrgent ? 'alarm' : 'time-outline'} 
+                    size={16} 
+                    color={timerColor} 
+                  />
+                  <Text style={[styles.timerLabel, { color: timerColor }]}>
+                    {isUrgent ? 'Hurry!' : 'Time remaining'}
+                  </Text>
+                </View>
+                <Text style={[styles.timerValue, { color: timerColor }]}>
+                  {formatTime(secondsLeft)}
+                </Text>
+              </View>
+              <View style={styles.timerBarBg}>
+                <View
+                  style={[
+                    styles.timerBarFill,
+                    {
+                      width: `${timerPct}%`,
+                      backgroundColor: timerColor,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          )}
         </View>
 
         <ScrollView
@@ -197,7 +316,6 @@ export default function QuizSession({ navigation, route }) {
         >
           {/* Question card */}
           <View style={styles.questionCard}>
-            {/* Difficulty + style chips */}
             <View style={styles.chipRow}>
               <View style={[
                 styles.chip,
@@ -214,9 +332,14 @@ export default function QuizSession({ navigation, route }) {
                   </Text>
                 </View>
               )}
+              {/* Show time limit as a chip */}
+              <View style={[styles.chip, { backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' }]}>
+                <Text style={[styles.chipText, { color: '#475569' }]}>
+                  ⏱ {formatTime(totalTimeForQuestion)}
+                </Text>
+              </View>
             </View>
 
-            {/* Question text */}
             <Text style={styles.questionText}>{currentQuestion.question}</Text>
           </View>
 
@@ -241,6 +364,12 @@ export default function QuizSession({ navigation, route }) {
                 ]}>
                   {feedback.is_correct ? 'Correct answer!' : 'Wrong answer'}
                 </Text>
+                {feedback.auto_submitted && (
+                  <View style={styles.timeUpBadge}>
+                    <Ionicons name="alarm" size={11} color="#B91C1C" />
+                    <Text style={styles.timeUpText}>Time expired</Text>
+                  </View>
+                )}
               </View>
 
               <View style={styles.feedbackBody}>
@@ -306,7 +435,7 @@ export default function QuizSession({ navigation, route }) {
             <View style={styles.optionsContainer}>
               {currentQuestion.options.map((option, idx) => {
                 const isSelected = selectedAnswer === option;
-                const letter = String.fromCharCode(65 + idx); // A, B, C, D
+                const letter = String.fromCharCode(65 + idx);
                 return (
                   <TouchableOpacity
                     key={idx}
@@ -316,6 +445,7 @@ export default function QuizSession({ navigation, route }) {
                     ]}
                     onPress={() => setSelectedAnswer(option)}
                     activeOpacity={0.8}
+                    disabled={timeExpired || submitting}
                   >
                     <View style={[
                       styles.optionLetter,
@@ -358,6 +488,7 @@ export default function QuizSession({ navigation, route }) {
                 value={explanation}
                 onChangeText={setExplanation}
                 textAlignVertical="top"
+                editable={!timeExpired && !submitting}
               />
               <Text style={styles.explanationCount}>
                 {explanation.length} characters {explanation.length < 10 && '(minimum 10)'}
@@ -365,7 +496,6 @@ export default function QuizSession({ navigation, route }) {
             </View>
           )}
 
-          {/* Spacer */}
           <View style={{ height: 100 }} />
         </ScrollView>
 
@@ -377,7 +507,7 @@ export default function QuizSession({ navigation, route }) {
                 styles.actionButton,
                 (!selectedAnswer || explanation.trim().length < 10 || submitting) && styles.actionButtonDisabled,
               ]}
-              onPress={handleSubmit}
+              onPress={() => handleSubmit(false)}
               disabled={!selectedAnswer || explanation.trim().length < 10 || submitting}
             >
               <LinearGradient
@@ -393,7 +523,9 @@ export default function QuizSession({ navigation, route }) {
                 {submitting ? (
                   <>
                     <ActivityIndicator size="small" color="#FFF" />
-                    <Text style={styles.actionText}>Evaluating...</Text>
+                    <Text style={styles.actionText}>
+                      {timeExpired ? 'Time up — auto-submitting...' : 'Evaluating...'}
+                    </Text>
                   </>
                 ) : (
                   <>
@@ -444,7 +576,7 @@ const styles = StyleSheet.create({
   header: {
     paddingTop: 12,
     paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingBottom: 14,
     backgroundColor: '#FFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
@@ -466,11 +598,47 @@ const styles = StyleSheet.create({
     backgroundColor: '#E2E8F0',
     borderRadius: 3,
     overflow: 'hidden',
+    marginBottom: 12,
   },
   progressFill: {
     height: '100%',
     backgroundColor: '#553C9A',
     borderRadius: 3,
+  },
+
+  timerContainer: {
+    marginTop: 2,
+  },
+  timerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  timerLabelWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  timerLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  timerValue: {
+    fontSize: 14,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  timerBarBg: {
+    height: 4,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  timerBarFill: {
+    height: '100%',
+    borderRadius: 2,
   },
 
   scrollContent: {
@@ -488,6 +656,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 6,
     marginBottom: 12,
+    flexWrap: 'wrap',
   },
   chip: {
     paddingHorizontal: 8,
@@ -611,6 +780,23 @@ const styles = StyleSheet.create({
   feedbackTitle: {
     fontSize: 16,
     fontWeight: '800',
+    flex: 1,
+  },
+  timeUpBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  timeUpText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#B91C1C',
   },
   feedbackBody: {
     padding: 14,
