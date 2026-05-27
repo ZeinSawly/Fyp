@@ -30,9 +30,10 @@ import SwapCourse from './Pages/Student/SwapCourse';
 import StudentAttendance from './Pages/Student/StudentAttendance';
 import StudentGrades from './Pages/Student/StudentGrades';
 import QuizIntro from './Pages/Student/QuizIntro';
-import QuizScreen from './Pages/Student/QuizScreen';
-import QuizFeedback from './Pages/Student/QuizFeedback';
+import QuizFieldSelection from './Pages/Student/QuizFieldSelection';
+import QuizSession from './Pages/Student/QuizSession';
 import QuizResults from './Pages/Student/QuizResults';
+import QuizHistory from './Pages/Student/QuizHistory';
 import Transcript from './Pages/Student/Transcript';
 
 
@@ -113,9 +114,10 @@ export default function App() {
         <Stack.Screen name="StudentAttendance" component={StudentAttendance} />
         <Stack.Screen name="StudentGrades" component={StudentGrades} />
         <Stack.Screen name="QuizIntro" component={QuizIntro} />
-        <Stack.Screen name="QuizScreen" component={QuizScreen} />
-        <Stack.Screen name="QuizFeedback" component={QuizFeedback} />
+        <Stack.Screen name="QuizFieldSelection" component={QuizFieldSelection} />
+        <Stack.Screen name="QuizSession" component={QuizSession} />
         <Stack.Screen name="QuizResults" component={QuizResults} />
+        <Stack.Screen name="QuizHistory" component={QuizHistory} />
         <Stack.Screen name="Transcript" component={Transcript}/>
 
         <Stack.Screen name="InstructorDashboard" component={InstructorDashboard} />

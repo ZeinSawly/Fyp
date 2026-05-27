@@ -1,567 +1,557 @@
 const db = require('../config/db');
-const OpenAI = require('openai');
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const { generateQuizQuestions, evaluateReasoning } = require('../services/openaiService');
 
-const TOTAL_QUESTIONS = 10;
-
-// ─── HELPER: Check if field is technical ───
-const isTechField = (field) => {
-  const techFields = [
-    'computer science', 'software engineering', 'information technology',
-    'cybersecurity', 'data science', 'networking', 'artificial intelligence',
-    'web development', 'mobile development', 'cloud computing'
-  ];
-  return techFields.some(f => field.toLowerCase().includes(f));
+// ============================================================
+// Helper: Compute proficiency level from percentage score
+// ============================================================
+const computeProficiencyLevel = (percent) => {
+  if (percent >= 85) return 'Expert';
+  if (percent >= 70) return 'Advanced';
+  if (percent >= 50) return 'Intermediate';
+  if (percent >= 30) return 'Novice';
+  return 'Beginner';
 };
 
-// ─── HELPER: Get question types based on field ───
-const getQuestionTypes = (field) => {
-  if (isTechField(field)) {
-    return `Generate exactly 4 questions, one of each type: mcq, output_prediction, spot_the_bug, scenario.
-- mcq: theoretical knowledge question with 4 options (A/B/C/D)
-- output_prediction: show a short code snippet, ask what it prints, 4 options (A/B/C/D)
-- spot_the_bug: show buggy code with 4 lines labeled A/B/C/D, one line has the bug
-- scenario: a real-world situation question with 4 options (A/B/C/D)`;
-  } else {
-    return `Generate exactly 4 questions of these types: 2 mcq, 1 case_study, 1 scenario.
-- mcq: theoretical knowledge question relevant to ${field} with 4 options (A/B/C/D)
-- case_study: a short real-world situation specific to ${field}, ask what the best approach is, 4 options (A/B/C/D)
-- scenario: a professional decision-making question relevant to ${field}, 4 options (A/B/C/D)`;
-  }
-};
-
-// ─── HELPER: Get difficulty from theta ───
-const getDifficulty = (theta) => {
-  if (theta < -1) return 1;
-  if (theta > 1) return 3;
-  return 2;
-};
-
-// ─── HELPER: Compute final score from option + explanation ───
-const computeFinalScore = (optionCorrect, explanationScore) => {
-  if (optionCorrect && explanationScore >= 7) return 10;
-  if (optionCorrect && explanationScore >= 4) return 7;
-  if (optionCorrect && explanationScore < 4)  return 5;
-  if (!optionCorrect && explanationScore >= 7) return 4;
-  if (!optionCorrect && explanationScore >= 4) return 2;
-  return 0;
-};
-
-// ─── HELPER: Normalize theta (-3 to +3) → skill score (0-100) ───
-const getFinalSkillScore = (theta) => {
-  return Math.round(((parseFloat(theta) + 3) / 6) * 100);
-};
-
-// ─── GENERATE QUESTIONS via OpenAI ───
-const generateQuestions = async (field, difficulty) => {
-  const difficultyLabel = difficulty === 1 ? 'beginner' : difficulty === 2 ? 'intermediate' : 'advanced';
-  const questionTypes = getQuestionTypes(field);
-
-  const prompt = `
-You are an expert quiz creator for a student career assessment system.
-
-Generate exactly 4 questions for a ${difficultyLabel} student interested in ${field}.
-${questionTypes}
-
-Important rules:
-- All questions must be directly relevant to ${field}
-- Questions must match the ${difficultyLabel} level
-- Every question must have exactly 4 options labeled A, B, C, D
-- The answer must be one of: A, B, C, or D
-- The explanation must clearly explain why the answer is correct
-
-Respond ONLY with a valid JSON array. No markdown, no extra text, no backticks:
-[
-  {
-    "type": "mcq",
-    "difficulty": ${difficulty},
-    "question": "...",
-    "code": null,
-    "code_lines": null,
-    "options": { "A": "...", "B": "...", "C": "...", "D": "..." },
-    "answer": "A",
-    "explanation": "Brief explanation of why this answer is correct"
-  },
-  {
-    "type": "output_prediction",
-    "difficulty": ${difficulty},
-    "question": "What does this code output?",
-    "code": "x = 5\nprint(x * 2)",
-    "code_lines": null,
-    "options": { "A": "5", "B": "10", "C": "25", "D": "Error" },
-    "answer": "B",
-    "explanation": "..."
-  },
-  {
-    "type": "spot_the_bug",
-    "difficulty": ${difficulty},
-    "question": "Which line contains the bug?",
-    "code": null,
-    "code_lines": { "A": "def add(a, b):", "B": "    result = a - b", "C": "    return result", "D": "print(add(2, 3))" },
-    "options": { "A": "Line A", "B": "Line B", "C": "Line C", "D": "Line D" },
-    "answer": "B",
-    "explanation": "..."
-  },
-  {
-    "type": "scenario",
-    "difficulty": ${difficulty},
-    "question": "...",
-    "code": null,
-    "code_lines": null,
-    "options": { "A": "...", "B": "...", "C": "...", "D": "..." },
-    "answer": "D",
-    "explanation": "..."
-  }
-]`;
-
-  const response = await client.chat.completions.create({
-    model: 'gpt-4o-mini',
-    max_tokens: 2000,
-    temperature: 0.7,
-    messages: [{ role: 'user', content: prompt }]
-  });
-
-  const raw = response.choices[0].message.content.trim();
-  const cleaned = raw.replace(/```json|```/g, '').trim();
-
+// ============================================================
+// GET /api/quiz/domains
+// Returns all CS skill domains with their allowed languages
+// ============================================================
+const getDomains = async (req, res) => {
   try {
-    return JSON.parse(cleaned);
-  } catch (err) {
-    console.error('Failed to parse OpenAI response:', cleaned);
-    throw new Error('Invalid JSON from OpenAI');
-  }
-};
-
-// ─── HELPER: Get or generate question from cache ───
-const getQuestion = async (field, difficulty, usedIds) => {
-  const usedPlaceholders = usedIds.length > 0
-    ? `AND id NOT IN (${usedIds.map(() => '?').join(',')})` : '';
-
-  const queryParams = usedIds.length > 0
-    ? [field, difficulty, ...usedIds]
-    : [field, difficulty];
-
-  const [cached] = await db.promise().query(
-    `SELECT * FROM quiz_questions
-     WHERE field = ? AND difficulty = ?
-     ${usedPlaceholders}
-     ORDER BY used_count ASC, RAND()
-     LIMIT 1`,
-    queryParams
-  );
-
-  if (cached.length > 0) {
-    await db.promise().query(
-      `UPDATE quiz_questions SET used_count = used_count + 1 WHERE id = ?`,
-      [cached[0].id]
+    const [rows] = await db.promise().query(
+      `SELECT id, major_id, code, name, description, allowed_languages, display_order
+       FROM skill_domains
+       WHERE active = 1
+       ORDER BY display_order ASC, name ASC`
     );
-    return cached[0];
-  }
 
-  // Cache miss — generate new batch from OpenAI
-  console.log(`Cache miss for field=${field}, difficulty=${difficulty}. Generating from OpenAI...`);
-  const questions = await generateQuestions(field, difficulty);
+    // Parse the JSON field
+    const domains = rows.map(d => ({
+      ...d,
+      allowed_languages: typeof d.allowed_languages === 'string' 
+        ? JSON.parse(d.allowed_languages) 
+        : d.allowed_languages,
+    }));
 
-  // Save all generated questions to cache
-  for (const q of questions) {
-    await db.promise().query(
-      `INSERT INTO quiz_questions
-       (field, difficulty, type, question, code, code_lines, options, answer, explanation)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        field,
-        difficulty,
-        q.type,
-        q.question,
-        q.code || null,
-        q.code_lines ? JSON.stringify(q.code_lines) : null,
-        JSON.stringify(q.options),
-        q.answer,
-        q.explanation || null
-      ]
-    );
-  }
-
-  // Return the first unused question
-  const [newQ] = await db.promise().query(
-    `SELECT * FROM quiz_questions
-     WHERE field = ? AND difficulty = ?
-     ${usedPlaceholders}
-     ORDER BY created_at DESC LIMIT 1`,
-    queryParams
-  );
-
-  if (!newQ || newQ.length === 0) {
-    throw new Error('Failed to retrieve generated question');
-  }
-
-  await db.promise().query(
-    `UPDATE quiz_questions SET used_count = used_count + 1 WHERE id = ?`,
-    [newQ[0].id]
-  );
-
-  return newQ[0];
-};
-
-// ─── EVALUATE EXPLANATION via OpenAI ───
-const evaluateExplanation = async (question, chosenOption, explanation, correctAnswer) => {
-  const prompt = `
-You are evaluating a student's explanation for a quiz answer in a career assessment system.
-
-Question: ${question}
-Correct answer: ${correctAnswer}
-Student chose: ${chosenOption}
-Student explanation: "${explanation}"
-
-Evaluate ONLY the quality of the explanation — does it show the student genuinely understands WHY the answer is what it is?
-Ignore whether they chose the right option. Focus purely on the reasoning quality.
-
-Respond ONLY with valid JSON, no markdown, no backticks:
-{
-  "explanationScore": <integer 0-10>,
-  "feedback": "<one concise sentence of constructive feedback>"
-}
-
-Scoring guide:
-- 9-10: Clear, accurate reasoning demonstrating solid understanding
-- 7-8: Good reasoning with minor gaps
-- 5-6: Partial understanding, some correct reasoning
-- 3-4: Vague or partially relevant explanation
-- 0-2: No explanation, irrelevant, or completely wrong reasoning`;
-
-  const response = await client.chat.completions.create({
-    model: 'gpt-4o-mini',
-    max_tokens: 150,
-    temperature: 0.3,
-    messages: [{ role: 'user', content: prompt }]
-  });
-
-  const raw = response.choices[0].message.content.trim();
-  const cleaned = raw.replace(/```json|```/g, '').trim();
-
-  try {
-    return JSON.parse(cleaned);
-  } catch (err) {
-    console.error('Failed to parse explanation evaluation:', cleaned);
-    return { explanationScore: 5, feedback: 'Could not evaluate explanation.' };
+    return res.status(200).json({
+      success: true,
+      data: domains,
+    });
+  } catch (error) {
+    console.error('Get domains error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
   }
 };
 
-// ═══════════════════════════════════════════════
-// ENDPOINT 1: Start Quiz Session
+// ============================================================
 // POST /api/quiz/start
-// Body: { student_id, field_of_interest }
-// ═══════════════════════════════════════════════
+// Creates a new quiz session, generates questions via OpenAI, saves them
+// Body: { student_id, domain_code, language, question_count? }
+// ============================================================
 const startQuiz = async (req, res) => {
-  const { student_id, field_of_interest } = req.body;
+  const { student_id, domain_code, language, question_count = 15 } = req.body;
 
-  if (!student_id || !field_of_interest) {
+  if (!student_id || !domain_code || !language) {
     return res.status(400).json({
       success: false,
-      message: 'student_id and field_of_interest are required'
+      message: 'student_id, domain_code, and language are required',
     });
   }
 
   try {
-    // Cancel any existing active session for this student
-    await db.promise().query(
-      `UPDATE quiz_sessions SET status = 'completed'
-       WHERE student_id = ? AND status = 'active'`,
-      [student_id]
+    // 1. Verify the domain exists and the language is allowed
+    const [domainRows] = await db.promise().query(
+      `SELECT id, name, allowed_languages 
+       FROM skill_domains 
+       WHERE code = ? AND active = 1`,
+      [domain_code]
     );
 
-    // Create new session
-    const [result] = await db.promise().query(
-      `INSERT INTO quiz_sessions (student_id, field_of_interest, theta, questions_answered, status)
-       VALUES (?, ?, 0, 0, 'active')`,
-      [student_id, field_of_interest]
+    if (domainRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Domain not found',
+      });
+    }
+
+    const domain = domainRows[0];
+    const allowedLanguages = typeof domain.allowed_languages === 'string'
+      ? JSON.parse(domain.allowed_languages)
+      : domain.allowed_languages;
+
+    if (!allowedLanguages.includes(language)) {
+      return res.status(400).json({
+        success: false,
+        message: `Language "${language}" is not allowed for domain "${domain.name}". Allowed: ${allowedLanguages.join(', ')}`,
+      });
+    }
+
+    // 2. Check if the student already has an in-progress session for this domain+language
+    //    If yes, return that one instead of creating a new one (resume)
+    const [existingSessions] = await db.promise().query(
+      `SELECT id, questions_json, started_at
+       FROM quiz_sessions
+       WHERE student_id = ? AND domain_code = ? AND language = ? AND status = 'in_progress'
+       ORDER BY started_at DESC LIMIT 1`,
+      [student_id, domain_code, language]
     );
 
-    const sessionId = result.insertId;
+    if (existingSessions.length > 0) {
+      const existing = existingSessions[0];
+      const questions = typeof existing.questions_json === 'string'
+        ? JSON.parse(existing.questions_json)
+        : existing.questions_json;
 
-    // Get first question at medium difficulty (theta = 0 → difficulty = 2)
-    const question = await getQuestion(field_of_interest, 2, []);
+      return res.status(200).json({
+        success: true,
+        message: 'Resuming existing in-progress quiz',
+        data: {
+          session_id: existing.id,
+          domain: domain.name,
+          language,
+          question_count: questions.length,
+          // Strip correct_answer and explanation_for_correct before sending to client!
+          questions: questions.map(q => ({
+            index: q.index,
+            difficulty: q.difficulty,
+            style: q.style,
+            type: q.type,
+            question: q.question,
+            options: q.options,
+            topic: q.topic,
+          })),
+          resumed: true,
+        },
+      });
+    }
 
-    return res.status(200).json({
+    // 3. Generate fresh questions via OpenAI
+    console.log(`Generating ${question_count} questions for ${domain.name} / ${language}...`);
+    const questions = await generateQuizQuestions(domain.name, language, question_count);
+
+    // 4. Create the quiz session in DB
+    const [insertResult] = await db.promise().query(
+      `INSERT INTO quiz_sessions 
+        (student_id, domain_code, language, question_count, questions_json, status)
+       VALUES (?, ?, ?, ?, ?, 'in_progress')`,
+      [student_id, domain_code, language, questions.length, JSON.stringify(questions)]
+    );
+
+    const session_id = insertResult.insertId;
+
+    // 5. Return questions to the client (WITHOUT the correct answers!)
+    return res.status(201).json({
       success: true,
-      session_id: sessionId,
-      question_number: 1,
-      total_questions: TOTAL_QUESTIONS,
-      question: {
-        id: question.id,
-        type: question.type,
-        difficulty: question.difficulty,
-        question: question.question,
-        code: question.code || null,
-        code_lines: typeof question.code_lines === 'string'
-          ? JSON.parse(question.code_lines)
-          : question.code_lines || null,
-        options: typeof question.options === 'string'
-          ? JSON.parse(question.options)
-          : question.options,
-      }
+      message: 'Quiz session created',
+      data: {
+        session_id,
+        domain: domain.name,
+        language,
+        question_count: questions.length,
+        questions: questions.map(q => ({
+          index: q.index,
+          difficulty: q.difficulty,
+          style: q.style,
+          type: q.type,
+          question: q.question,
+          options: q.options,
+          topic: q.topic,
+          // NOTE: correct_answer and explanation_for_correct are intentionally OMITTED
+        })),
+        resumed: false,
+      },
     });
 
   } catch (error) {
     console.error('Start quiz error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to start quiz',
-      error: error.message
+      message: 'Failed to start quiz: ' + error.message,
     });
   }
 };
 
-// ═══════════════════════════════════════════════
-// ENDPOINT 2: Submit Answer
-// POST /api/quiz/answer
-// Body: { session_id, question_id, selected_option, explanation }
-// ═══════════════════════════════════════════════
+// ============================================================
+// POST /api/quiz/submit-answer
+// Submits a single answer + explanation, evaluates it
+// Body: { session_id, question_index, student_answer, student_explanation }
+// ============================================================
 const submitAnswer = async (req, res) => {
-  const { session_id, question_id, selected_option, explanation } = req.body;
+  const { session_id, question_index, student_answer, student_explanation } = req.body;
 
-  if (!session_id || !question_id || !selected_option || !explanation) {
+  if (!session_id || question_index === undefined || !student_answer) {
     return res.status(400).json({
       success: false,
-      message: 'session_id, question_id, selected_option and explanation are required'
+      message: 'session_id, question_index, and student_answer are required',
     });
   }
 
   try {
-    // Get active session
-    const [sessions] = await db.promise().query(
-      `SELECT * FROM quiz_sessions WHERE id = ? AND status = 'active'`,
+    // 1. Get the session and its questions
+    const [sessionRows] = await db.promise().query(
+      `SELECT id, student_id, domain_code, language, questions_json, status
+       FROM quiz_sessions WHERE id = ?`,
       [session_id]
     );
 
-    if (sessions.length === 0) {
+    if (sessionRows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'No active quiz session found'
+        message: 'Session not found',
       });
     }
 
-    const session = sessions[0];
+    const session = sessionRows[0];
 
-    // Get question
-    const [questions] = await db.promise().query(
-      `SELECT * FROM quiz_questions WHERE id = ?`,
-      [question_id]
-    );
-
-    if (questions.length === 0) {
-      return res.status(404).json({
+    if (session.status !== 'in_progress') {
+      return res.status(400).json({
         success: false,
-        message: 'Question not found'
+        message: 'This quiz session is already completed or abandoned',
       });
     }
 
-    const question = questions[0];
-    const optionCorrect = selected_option.toUpperCase() === question.answer.toUpperCase();
+    const questions = typeof session.questions_json === 'string'
+      ? JSON.parse(session.questions_json)
+      : session.questions_json;
 
-    // Evaluate explanation via OpenAI
-    const { explanationScore, feedback } = await evaluateExplanation(
-      question.question,
-      selected_option,
-      explanation,
-      question.answer
+    const question = questions[question_index];
+    if (!question) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid question_index ${question_index}`,
+      });
+    }
+
+    // 2. Check if this question was already answered (prevent re-submission)
+    const [existingResponse] = await db.promise().query(
+      `SELECT id FROM quiz_responses WHERE session_id = ? AND question_index = ?`,
+      [session_id, question_index]
     );
 
-    // Compute final score
-    const finalScore = computeFinalScore(optionCorrect, explanationScore);
+    if (existingResponse.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: 'You already answered this question',
+      });
+    }
 
-    // Update theta using normalized score
-    const normalizedScore = (finalScore / 10) * 2 - 1; // maps 0-10 → -1 to +1
-    const delta = normalizedScore * 0.3 * question.difficulty;
-    const newTheta = Math.max(-3, Math.min(3, parseFloat(session.theta) + delta));
-    const newQuestionsAnswered = session.questions_answered + 1;
-    const isDone = newQuestionsAnswered >= TOTAL_QUESTIONS;
+    // 3. Check MCQ correctness
+    const is_correct = student_answer === question.correct_answer ? 1 : 0;
 
-    // Save response
+    // 4. Evaluate the explanation with GPT
+    const reasoningEval = await evaluateReasoning({
+      question: question.question,
+      options: question.options,
+      correct_answer: question.correct_answer,
+      correct_explanation: question.explanation_for_correct,
+      student_answer,
+      student_explanation,
+      is_correct: !!is_correct,
+      domain: session.domain_code,
+      language: session.language,
+    });
+
+    // 5. Compute total score for this question
+    //    Max = 2.0 (1 for correct MCQ + 1 for perfect reasoning)
+    const reasoning_score = reasoningEval.score;
+    const total_score = (is_correct ? 1 : 0) + reasoning_score;
+
+    // 6. Save the response
     await db.promise().query(
       `INSERT INTO quiz_responses
-       (session_id, question_id, selected_option, student_explanation,
-        option_correct, explanation_score, final_score, difficulty)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (session_id, question_index, question_text, question_type, difficulty,
+         correct_answer, student_answer, student_explanation,
+         is_correct, reasoning_score, reasoning_feedback, total_score)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        session_id, question_id, selected_option, explanation,
-        optionCorrect, explanationScore, finalScore, question.difficulty
+        session_id,
+        question_index,
+        question.question,
+        question.type || 'mcq',
+        question.difficulty || 'medium',
+        question.correct_answer,
+        student_answer,
+        student_explanation || null,
+        is_correct,
+        reasoning_score,
+        reasoningEval.feedback,
+        total_score,
       ]
     );
 
-    // Get all used question IDs for this session
-    const [usedRows] = await db.promise().query(
-      `SELECT question_id FROM quiz_responses WHERE session_id = ?`,
-      [session_id]
-    );
-    const usedIds = usedRows.map(r => r.question_id);
-
-    let nextQuestion = null;
-    let skillScore = null;
-
-    if (isDone) {
-      // Quiz complete
-      skillScore = getFinalSkillScore(newTheta);
-
-      await db.promise().query(
-        `UPDATE quiz_sessions
-         SET theta = ?, questions_answered = ?,
-             status = 'completed', skill_score = ?, completed_at = NOW()
-         WHERE id = ?`,
-        [newTheta, newQuestionsAnswered, skillScore, session_id]
-      );
-
-    } else {
-      // Update session and get next question
-      await db.promise().query(
-        `UPDATE quiz_sessions
-         SET theta = ?, questions_answered = ?
-         WHERE id = ?`,
-        [newTheta, newQuestionsAnswered, session_id]
-      );
-
-      const nextDifficulty = getDifficulty(newTheta);
-      const nextQ = await getQuestion(session.field_of_interest, nextDifficulty, usedIds);
-
-      nextQuestion = {
-        id: nextQ.id,
-        type: nextQ.type,
-        difficulty: nextQ.difficulty,
-        question: nextQ.question,
-        code: nextQ.code || null,
-        code_lines: typeof nextQ.code_lines === 'string'
-          ? JSON.parse(nextQ.code_lines)
-          : nextQ.code_lines || null,
-        options: typeof nextQ.options === 'string'
-          ? JSON.parse(nextQ.options)
-          : nextQ.options,
-      };
-    }
-
     return res.status(200).json({
       success: true,
-      optionCorrect,
-      correctAnswer: question.answer,
-      questionExplanation: question.explanation,
-      explanationScore,
-      finalScore,
-      feedback,
-      questionsAnswered: newQuestionsAnswered,
-      totalQuestions: TOTAL_QUESTIONS,
-      currentTheta: newTheta,
-      done: isDone,
-      skillScore,
-      nextQuestion,
+      data: {
+        question_index,
+        is_correct: !!is_correct,
+        reasoning_score,
+        reasoning_feedback: reasoningEval.feedback,
+        total_score,
+        max_score: 2.0,
+        // Show correct answer & explanation NOW so student learns from it
+        correct_answer: question.correct_answer,
+        correct_explanation: question.explanation_for_correct,
+      },
     });
 
   } catch (error) {
     console.error('Submit answer error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to process answer',
-      error: error.message
+      message: 'Failed to submit answer: ' + error.message,
     });
   }
 };
 
-// ═══════════════════════════════════════════════
-// ENDPOINT 3: Get Quiz Results
-// GET /api/quiz/results/:student_id
-// ═══════════════════════════════════════════════
-const getQuizResults = async (req, res) => {
-  const { student_id } = req.params;
+// ============================================================
+// POST /api/quiz/complete
+// Marks a session as completed, computes final aggregate scores
+// Body: { session_id }
+// ============================================================
+const completeQuiz = async (req, res) => {
+  const { session_id } = req.body;
+
+  if (!session_id) {
+    return res.status(400).json({
+      success: false,
+      message: 'session_id is required',
+    });
+  }
 
   try {
-    const [sessions] = await db.promise().query(
-      `SELECT * FROM quiz_sessions
-       WHERE student_id = ? AND status = 'completed'
-       ORDER BY completed_at DESC LIMIT 1`,
-      [student_id]
+    // 1. Verify session exists and is in_progress
+    const [sessionRows] = await db.promise().query(
+      `SELECT id, student_id, question_count, status
+       FROM quiz_sessions WHERE id = ?`,
+      [session_id]
     );
 
-    if (sessions.length === 0) {
+    if (sessionRows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'No completed quiz session found'
+        message: 'Session not found',
       });
     }
 
-    const session = sessions[0];
+    const session = sessionRows[0];
 
-    const [responses] = await db.promise().query(
-      `SELECT
-        qr.id,
-        qr.selected_option,
-        qr.student_explanation,
-        qr.option_correct,
-        qr.explanation_score,
-        qr.final_score,
-        qr.difficulty,
-        qq.type,
-        qq.question,
-        qq.answer AS correct_answer,
-        qq.explanation AS question_explanation
-       FROM quiz_responses qr
-       JOIN quiz_questions qq ON qr.question_id = qq.id
-       WHERE qr.session_id = ?
-       ORDER BY qr.created_at ASC`,
-      [session.id]
+    if (session.status === 'completed') {
+      return res.status(400).json({
+        success: false,
+        message: 'Session already completed',
+      });
+    }
+
+    // 2. Compute aggregate scores from responses
+    const [aggResult] = await db.promise().query(
+      `SELECT 
+          COUNT(*) AS responses_count,
+          SUM(is_correct) AS correct_count,
+          AVG(reasoning_score) AS reasoning_avg,
+          SUM(total_score) AS total_score
+       FROM quiz_responses
+       WHERE session_id = ?`,
+      [session_id]
+    );
+
+    const agg = aggResult[0];
+    const responsesCount = Number(agg.responses_count || 0);
+
+    if (responsesCount < session.question_count) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot complete: only ${responsesCount}/${session.question_count} questions answered`,
+      });
+    }
+
+    // Max possible total = 2.0 × question_count
+    const maxTotal = 2.0 * session.question_count;
+    const totalScore = Number(agg.total_score || 0);
+    const scorePercent = maxTotal > 0 ? (totalScore / maxTotal) * 100 : 0;
+    const correctCount = Number(agg.correct_count || 0);
+    const reasoningAvg = Number(agg.reasoning_avg || 0);
+    const proficiencyLevel = computeProficiencyLevel(scorePercent);
+
+    // 3. Update the session
+    await db.promise().query(
+      `UPDATE quiz_sessions SET
+          status = 'completed',
+          correct_count = ?,
+          reasoning_avg = ?,
+          total_score = ?,
+          score_percent = ?,
+          proficiency_level = ?,
+          completed_at = NOW()
+       WHERE id = ?`,
+      [
+        correctCount,
+        reasoningAvg,
+        totalScore,
+        scorePercent,
+        proficiencyLevel,
+        session_id,
+      ]
     );
 
     return res.status(200).json({
       success: true,
-      session: {
-        id: session.id,
-        field_of_interest: session.field_of_interest,
-        skill_score: session.skill_score,
-        theta: session.theta,
-        questions_answered: session.questions_answered,
-        started_at: session.started_at,
-        completed_at: session.completed_at,
+      message: 'Quiz completed',
+      data: {
+        session_id,
+        question_count: session.question_count,
+        correct_count: correctCount,
+        reasoning_avg: Number(reasoningAvg.toFixed(2)),
+        total_score: Number(totalScore.toFixed(2)),
+        max_total: maxTotal,
+        score_percent: Number(scorePercent.toFixed(2)),
+        proficiency_level: proficiencyLevel,
       },
-      responses
     });
 
   } catch (error) {
-    console.error('Get quiz results error:', error);
+    console.error('Complete quiz error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to get quiz results',
-      error: error.message
+      message: 'Failed to complete quiz: ' + error.message,
     });
   }
 };
 
-// ═══════════════════════════════════════════════
-// ENDPOINT 4: Get All Quiz Sessions for Student
-// GET /api/quiz/history/:student_id
-// ═══════════════════════════════════════════════
-const getQuizHistory = async (req, res) => {
+// ============================================================
+// GET /api/quiz/sessions/:student_id
+// List all of a student's past quiz sessions
+// ============================================================
+const getStudentSessions = async (req, res) => {
   const { student_id } = req.params;
+
+  if (!student_id) {
+    return res.status(400).json({
+      success: false,
+      message: 'student_id is required',
+    });
+  }
 
   try {
     const [sessions] = await db.promise().query(
-      `SELECT id, field_of_interest, skill_score, theta,
-              questions_answered, status, started_at, completed_at
-       FROM quiz_sessions
-       WHERE student_id = ?
-       ORDER BY started_at DESC`,
+      `SELECT 
+          qs.id,
+          qs.domain_code,
+          sd.name AS domain_name,
+          qs.language,
+          qs.question_count,
+          qs.status,
+          qs.correct_count,
+          qs.reasoning_avg,
+          qs.total_score,
+          qs.score_percent,
+          qs.proficiency_level,
+          qs.started_at,
+          qs.completed_at
+       FROM quiz_sessions qs
+       LEFT JOIN skill_domains sd ON qs.domain_code = sd.code
+       WHERE qs.student_id = ?
+       ORDER BY qs.started_at DESC`,
       [student_id]
     );
 
     return res.status(200).json({
       success: true,
-      data: sessions
+      data: sessions,
     });
-
   } catch (error) {
-    console.error('Get quiz history error:', error);
+    console.error('Get sessions error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to get quiz history',
-      error: error.message
+      message: 'Server error',
+      error: error.message,
     });
   }
 };
 
-module.exports = { startQuiz, submitAnswer, getQuizResults, getQuizHistory };
+// ============================================================
+// GET /api/quiz/session/:session_id
+// Get one session's full details (for review)
+// ============================================================
+const getSessionDetails = async (req, res) => {
+  const { session_id } = req.params;
+
+  if (!session_id) {
+    return res.status(400).json({
+      success: false,
+      message: 'session_id is required',
+    });
+  }
+
+  try {
+    // Get session
+    const [sessionRows] = await db.promise().query(
+      `SELECT 
+          qs.id,
+          qs.student_id,
+          qs.domain_code,
+          sd.name AS domain_name,
+          qs.language,
+          qs.question_count,
+          qs.status,
+          qs.correct_count,
+          qs.reasoning_avg,
+          qs.total_score,
+          qs.score_percent,
+          qs.proficiency_level,
+          qs.started_at,
+          qs.completed_at
+       FROM quiz_sessions qs
+       LEFT JOIN skill_domains sd ON qs.domain_code = sd.code
+       WHERE qs.id = ?`,
+      [session_id]
+    );
+
+    if (sessionRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found',
+      });
+    }
+
+    // Get responses
+    const [responses] = await db.promise().query(
+      `SELECT 
+          id, question_index, question_text, question_type, difficulty,
+          correct_answer, student_answer, student_explanation,
+          is_correct, reasoning_score, reasoning_feedback, total_score,
+          answered_at
+       FROM quiz_responses
+       WHERE session_id = ?
+       ORDER BY question_index ASC`,
+      [session_id]
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        session: sessionRows[0],
+        responses,
+      },
+    });
+  } catch (error) {
+    console.error('Get session details error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+};
+
+module.exports = {
+  getDomains,
+  startQuiz,
+  submitAnswer,
+  completeQuiz,
+  getStudentSessions,
+  getSessionDetails,
+};

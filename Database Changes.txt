@@ -206,3 +206,60 @@ ADD CONSTRAINT fk_sections_finalized_by
   FOREIGN KEY (finalized_by) REFERENCES users(id);
 
 
+
+Added these 3 tables for the quiz:
+
+CREATE TABLE skill_domains (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  allowed_languages JSON NOT NULL,
+  display_order INT DEFAULT 0,
+  active TINYINT(1) DEFAULT 1
+);
+
+
+
+CREATE TABLE quiz_sessions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  student_id INT NOT NULL,
+  domain_code VARCHAR(50) NOT NULL,
+  language VARCHAR(50) NOT NULL,
+  question_count INT NOT NULL DEFAULT 15,
+  questions_json JSON NOT NULL,
+  status ENUM('in_progress','completed','abandoned') DEFAULT 'in_progress',
+  correct_count INT DEFAULT NULL,
+  reasoning_avg DECIMAL(3,2) DEFAULT NULL,
+  total_score DECIMAL(5,2) DEFAULT NULL,
+  score_percent DECIMAL(5,2) DEFAULT NULL,
+  proficiency_level VARCHAR(20) DEFAULT NULL,
+  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  completed_at TIMESTAMP NULL,
+  FOREIGN KEY (student_id) REFERENCES users(id),
+  INDEX idx_student (student_id),
+  INDEX idx_status (status)
+);
+
+
+
+
+CREATE TABLE quiz_responses (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  session_id INT NOT NULL,
+  question_index INT NOT NULL,
+  question_text TEXT NOT NULL,
+  question_type ENUM('mcq','code_output','true_false') DEFAULT 'mcq',
+  difficulty ENUM('easy','medium','hard') DEFAULT 'medium',
+  correct_answer VARCHAR(500),
+  student_answer VARCHAR(500),
+  student_explanation TEXT,
+  is_correct TINYINT(1),
+  reasoning_score DECIMAL(3,2) DEFAULT NULL,
+  reasoning_feedback TEXT,
+  total_score DECIMAL(3,2) DEFAULT NULL,
+  answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (session_id) REFERENCES quiz_sessions(id) ON DELETE CASCADE,
+  INDEX idx_session (session_id)
+);
+

@@ -1,455 +1,732 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  View, Text, StyleSheet, SafeAreaView, ScrollView,
-  TouchableOpacity, FlatList
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
+  ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import api from '../../config/api';
 
-export default function QuizResults({ route, navigation }) {
-  const { student, skillScore, field_of_interest, questionsAnswered, responses } = route.params;
-  const [expandedIndex, setExpandedIndex] = useState(null);
+const PROFICIENCY_CONFIG = {
+  Beginner: { 
+    color: '#94A3B8', 
+    bg: '#F1F5F9',
+    gradient: ['#94A3B8', '#64748B'],
+    icon: 'seedling', 
+    iconLib: 'sprout-outline',
+    description: 'You\'re starting your journey. Practice fundamentals and code daily.',
+    range: '0–29%'
+  },
+  Novice: { 
+    color: '#F59E0B', 
+    bg: '#FFFBEB',
+    gradient: ['#F59E0B', '#D97706'],
+    icon: 'flower-outline',
+    iconLib: 'flower-outline',
+    description: 'Foundational understanding present. Focus on real projects to deepen skills.',
+    range: '30–49%'
+  },
+  Intermediate: { 
+    color: '#3B82F6', 
+    bg: '#EFF6FF',
+    gradient: ['#3B82F6', '#2563EB'],
+    icon: 'rocket-outline',
+    iconLib: 'rocket-outline',
+    description: 'Solid working knowledge. Time to tackle complex problems and contribute to projects.',
+    range: '50–69%'
+  },
+  Advanced: { 
+    color: '#10B981', 
+    bg: '#F0FDF4',
+    gradient: ['#10B981', '#059669'],
+    icon: 'trophy-outline',
+    iconLib: 'trophy-outline',
+    description: 'Strong technical proficiency. Ready for senior-level challenges and mentorship roles.',
+    range: '70–84%'
+  },
+  Expert: { 
+    color: '#8B5CF6', 
+    bg: '#FAF5FF',
+    gradient: ['#8B5CF6', '#7C3AED'],
+    icon: 'diamond-outline',
+    iconLib: 'diamond-outline',
+    description: 'Exceptional mastery. You demonstrate deep understanding and could lead technical initiatives.',
+    range: '85–100%'
+  },
+};
 
-  const { timeUp } = route.params;
+export default function QuizResults({ navigation, route }) {
+  const { student, result, session_id } = route.params || {};
 
+  const [details, setDetails] = useState(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [showAllAnswers, setShowAllAnswers] = useState(false);
 
-  const getScoreColor = (score) => {
-    if (score >= 75) return '#2f855a';
-    if (score >= 50) return '#d97706';
-    return '#c53030';
-  };
+  const proficiency = PROFICIENCY_CONFIG[result?.proficiency_level] || PROFICIENCY_CONFIG.Beginner;
 
-  const getScoreLabel = (score) => {
-    if (score >= 85) return 'Excellent';
-    if (score >= 70) return 'Good';
-    if (score >= 50) return 'Average';
-    return 'Needs Improvement';
-  };
-
-  const getScoreMessage = (score) => {
-    if (score >= 85) return `You demonstrated strong knowledge and reasoning skills in ${field_of_interest}.`;
-    if (score >= 70) return `You showed good understanding of ${field_of_interest} with room to improve.`;
-    if (score >= 50) return `You have a basic understanding of ${field_of_interest}. Keep practicing!`;
-    return `You may need to build more foundational knowledge in ${field_of_interest}.`;
-  };
-
-  const getTypeLabel = (type) => {
-    switch (type) {
-      case 'mcq': return 'MCQ';
-      case 'output_prediction': return 'Output';
-      case 'spot_the_bug': return 'Bug';
-      case 'scenario': return 'Scenario';
-      case 'case_study': return 'Case Study';
-      default: return type;
+  const loadDetails = async () => {
+    if (details) {
+      setShowAllAnswers(!showAllAnswers);
+      return;
+    }
+    setLoadingDetails(true);
+    try {
+      const res = await api.get(`/api/quiz/session/${session_id}`);
+      if (res.data.success) {
+        setDetails(res.data.data);
+        setShowAllAnswers(true);
+      }
+    } catch (err) {
+      console.error('Failed to load details', err);
+    } finally {
+      setLoadingDetails(false);
     }
   };
 
-  const getFinalScoreColor = (score) => {
-    if (score >= 8) return '#2f855a';
-    if (score >= 5) return '#d97706';
-    return '#c53030';
-  };
-
-  const correctCount = responses?.filter(r => r.optionCorrect).length || 0;
-  const wrongCount = (responses?.length || 0) - correctCount;
-  const scoreColor = getScoreColor(skillScore);
-
-  const renderResponse = ({ item, index }) => {
-    const isExpanded = expandedIndex === index;
-
+  if (!result) {
     return (
-      <TouchableOpacity
-        style={[
-          styles.responseCard,
-          { borderLeftColor: item.optionCorrect ? '#2f855a' : '#c53030' }
-        ]}
-        onPress={() => setExpandedIndex(isExpanded ? null : index)}
-        activeOpacity={0.7}
-      >
-        {/* Response header */}
-        <View style={styles.responseHeader}>
-          <View style={styles.responseHeaderLeft}>
-            <View style={[
-              styles.responseNumberCircle,
-              { backgroundColor: item.optionCorrect ? '#C6F6D5' : '#FEE2E2' }
-            ]}>
-              <Text style={[
-                styles.responseNumber,
-                { color: item.optionCorrect ? '#2f855a' : '#c53030' }
-              ]}>
-                {item.questionNumber}
-              </Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.responseQuestion} numberOfLines={isExpanded ? undefined : 2}>
-                {item.questionText}
-              </Text>
-              <View style={styles.responseMetaRow}>
-                <View style={styles.typePill}>
-                  <Text style={styles.typePillText}>{getTypeLabel(item.type)}</Text>
-                </View>
-                <Text style={styles.difficultyText}>
-                  {item.difficulty === 1 ? '● Easy' : item.difficulty === 2 ? '●● Medium' : '●●● Hard'}
-                </Text>
-              </View>
-            </View>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.center}>
+          <Text>No results data</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const scorePercent = Number(result.score_percent || 0);
+  const correctCount = Number(result.correct_count || 0);
+  const totalQuestions = Number(result.question_count || 0);
+  const reasoningAvg = Number(result.reasoning_avg || 0);
+  const totalScore = Number(result.total_score || 0);
+  const maxTotal = Number(result.max_total || (totalQuestions * 2));
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Hero header */}
+        <LinearGradient
+          colors={proficiency.gradient}
+          style={styles.heroCard}
+        >
+          <TouchableOpacity 
+            onPress={() => navigation.reset({
+              index: 1,
+              routes: [
+                { name: 'StudentDashboard', params: { student } },
+                { name: 'QuizIntro', params: { student } },
+              ],
+            })}
+            style={styles.closeBtn}
+          >
+            <Ionicons name="close" size={22} color="#FFF" />
+          </TouchableOpacity>
+
+          <View style={styles.heroIcon}>
+            <Ionicons name={proficiency.iconLib} size={42} color="#FFF" />
           </View>
 
-          <View style={styles.responseHeaderRight}>
-            <View style={[
-              styles.scoreCircleSmall,
-              { borderColor: getFinalScoreColor(item.finalScore) }
-            ]}>
-              <Text style={[
-                styles.scoreCircleSmallText,
-                { color: getFinalScoreColor(item.finalScore) }
-              ]}>
-                {item.finalScore}/10
-              </Text>
-            </View>
-            <Ionicons
-              name={isExpanded ? 'chevron-up' : 'chevron-down'}
-              size={16}
-              color="#94A3B8"
-              style={{ marginTop: 6 }}
-            />
+          <Text style={styles.heroLabel}>YOUR PROFICIENCY LEVEL</Text>
+          <Text style={styles.heroLevel}>{result.proficiency_level}</Text>
+          <Text style={styles.heroRange}>{proficiency.range}</Text>
+
+          {/* Score percentage */}
+          <View style={styles.scoreContainer}>
+            <Text style={styles.scoreValue}>{scorePercent.toFixed(1)}%</Text>
+            <Text style={styles.scoreLabel}>Overall Score</Text>
+          </View>
+
+          <Text style={styles.heroDescription}>{proficiency.description}</Text>
+        </LinearGradient>
+
+        {/* Stats grid */}
+        <View style={styles.statsGrid}>
+          <View style={styles.statBox}>
+            <Ionicons name="checkmark-circle" size={22} color="#10B981" />
+            <Text style={styles.statValue}>{correctCount}/{totalQuestions}</Text>
+            <Text style={styles.statLabel}>Correct Answers</Text>
+          </View>
+
+          <View style={styles.statBox}>
+            <Ionicons name="bulb" size={22} color="#553C9A" />
+            <Text style={styles.statValue}>{reasoningAvg.toFixed(2)}</Text>
+            <Text style={styles.statLabel}>Avg Reasoning</Text>
+          </View>
+
+          <View style={styles.statBox}>
+            <Ionicons name="trophy" size={22} color="#F59E0B" />
+            <Text style={styles.statValue}>{totalScore.toFixed(1)}</Text>
+            <Text style={styles.statLabel}>Total Points</Text>
+          </View>
+
+          <View style={styles.statBox}>
+            <Ionicons name="podium" size={22} color="#3B82F6" />
+            <Text style={styles.statValue}>{maxTotal}</Text>
+            <Text style={styles.statLabel}>Max Possible</Text>
           </View>
         </View>
 
-        {/* Expanded details */}
-        {isExpanded && (
-          <View style={styles.responseDetails}>
-            <View style={styles.detailsDivider} />
+        {/* Score breakdown explanation */}
+        <View style={styles.breakdownCard}>
+          <Text style={styles.breakdownTitle}>How your score was calculated</Text>
+          <View style={styles.breakdownRow}>
+            <View style={styles.breakdownIcon}>
+              <Ionicons name="checkmark-circle-outline" size={20} color="#10B981" />
+            </View>
+            <View style={styles.breakdownText}>
+              <Text style={styles.breakdownLine}>
+                <Text style={styles.breakdownBold}>MCQ answers: </Text>
+                {correctCount} correct out of {totalQuestions} (1 point each)
+              </Text>
+            </View>
+          </View>
 
-            {/* Code block */}
-            {item.code && (
-              <View style={styles.codeBlock}>
-                <Text style={styles.codeText}>{item.code}</Text>
-              </View>
-            )}
+          <View style={styles.breakdownRow}>
+            <View style={styles.breakdownIcon}>
+              <Ionicons name="bulb-outline" size={20} color="#553C9A" />
+            </View>
+            <View style={styles.breakdownText}>
+              <Text style={styles.breakdownLine}>
+                <Text style={styles.breakdownBold}>Reasoning quality: </Text>
+                Average {reasoningAvg.toFixed(2)} out of 1.00 per question
+              </Text>
+            </View>
+          </View>
 
-            {/* Code lines */}
-            {item.code_lines && (
-              <View style={styles.codeBlock}>
-                {Object.entries(item.code_lines).map(([key, line]) => (
-                  <View key={key} style={styles.codeLine}>
-                    <Text style={styles.codeLineLabel}>{key}.</Text>
-                    <Text style={styles.codeLineText}>{line}</Text>
+          <View style={styles.breakdownRow}>
+            <View style={styles.breakdownIcon}>
+              <Ionicons name="calculator-outline" size={20} color="#F59E0B" />
+            </View>
+            <View style={styles.breakdownText}>
+              <Text style={styles.breakdownLine}>
+                <Text style={styles.breakdownBold}>Total: </Text>
+                {totalScore.toFixed(2)} / {maxTotal.toFixed(0)} = {scorePercent.toFixed(1)}%
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Career recommendations placeholder */}
+        <View style={styles.placeholderCard}>
+          <View style={styles.placeholderIcon}>
+            <Ionicons name="construct-outline" size={32} color="#553C9A" />
+          </View>
+          <Text style={styles.placeholderTitle}>Career Recommendations Coming Soon</Text>
+          <Text style={styles.placeholderText}>
+            We're training the AI model that will analyze your quiz performance alongside your academic record to suggest tailored Computer Science career paths.
+          </Text>
+          <View style={styles.placeholderTags}>
+            <View style={styles.placeholderTag}>
+              <Ionicons name="sync" size={12} color="#553C9A" />
+              <Text style={styles.placeholderTagText}>In Development</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Review answers button */}
+        <TouchableOpacity
+          style={styles.reviewButton}
+          onPress={loadDetails}
+        >
+          <Ionicons name="document-text-outline" size={20} color="#475569" />
+          <Text style={styles.reviewButtonText}>
+            {showAllAnswers ? 'Hide answer review' : 'Review all answers'}
+          </Text>
+          {loadingDetails ? (
+            <ActivityIndicator size="small" color="#475569" />
+          ) : (
+            <Ionicons 
+              name={showAllAnswers ? 'chevron-up' : 'chevron-down'} 
+              size={20} 
+              color="#94A3B8" 
+            />
+          )}
+        </TouchableOpacity>
+
+        {/* All responses (expanded) */}
+        {showAllAnswers && details?.responses && (
+          <View style={styles.responsesContainer}>
+            {details.responses.map((r, idx) => (
+              <View key={r.id} style={styles.responseCard}>
+                <View style={styles.responseHeader}>
+                  <View style={styles.responseNum}>
+                    <Text style={styles.responseNumText}>Q{idx + 1}</Text>
                   </View>
-                ))}
-              </View>
-            )}
-
-            {/* Options */}
-            {Object.entries(item.options).map(([key, value]) => {
-              const isSelected = key === item.selectedOption;
-              const isCorrect = key === item.correctAnswer;
-              let bgColor = '#F8FAFC';
-              let borderColor = '#E2E8F0';
-              let textColor = '#1E293B';
-
-              if (isCorrect) { bgColor = '#C6F6D5'; borderColor = '#2f855a'; textColor = '#2f855a'; }
-              else if (isSelected && !isCorrect) { bgColor = '#FEE2E2'; borderColor = '#c53030'; textColor = '#c53030'; }
-
-              return (
-                <View key={key} style={[styles.optionRow, { backgroundColor: bgColor, borderColor }]}>
-                  <Text style={[styles.optionKey, { color: textColor }]}>{key}.</Text>
-                  <Text style={[styles.optionValue, { color: textColor }]}>{value}</Text>
-                  {isCorrect && <Ionicons name="checkmark-circle" size={16} color="#2f855a" />}
-                  {isSelected && !isCorrect && <Ionicons name="close-circle" size={16} color="#c53030" />}
+                  <View style={styles.responseHeaderRight}>
+                    <View style={[
+                      styles.responseBadge,
+                      { backgroundColor: r.is_correct ? '#F0FDF4' : '#FEE2E2' }
+                    ]}>
+                      <Ionicons
+                        name={r.is_correct ? 'checkmark' : 'close'}
+                        size={12}
+                        color={r.is_correct ? '#15803D' : '#B91C1C'}
+                      />
+                      <Text style={[
+                        styles.responseBadgeText,
+                        { color: r.is_correct ? '#15803D' : '#B91C1C' }
+                      ]}>
+                        {r.is_correct ? 'Correct' : 'Wrong'}
+                      </Text>
+                    </View>
+                    <Text style={styles.responseScore}>
+                      {Number(r.total_score).toFixed(2)} / 2.00
+                    </Text>
+                  </View>
                 </View>
-              );
-            })}
 
-            {/* Your answer vs correct */}
-            <View style={styles.answerSummary}>
-              <View style={[styles.answerPill, { backgroundColor: item.optionCorrect ? '#C6F6D5' : '#FEE2E2' }]}>
-                <Text style={[styles.answerPillText, { color: item.optionCorrect ? '#2f855a' : '#c53030' }]}>
-                  Your answer: {item.selectedOption} {item.optionCorrect ? '✓' : '✗'}
-                </Text>
-              </View>
-              {!item.optionCorrect && (
-                <View style={[styles.answerPill, { backgroundColor: '#C6F6D5' }]}>
-                  <Text style={[styles.answerPillText, { color: '#2f855a' }]}>
-                    Correct: {item.correctAnswer} ✓
-                  </Text>
+                <Text style={styles.responseQuestion}>{r.question_text}</Text>
+
+                <View style={styles.responseAnswers}>
+                  <View style={styles.responseAnswerRow}>
+                    <Text style={styles.responseAnswerLabel}>Your answer:</Text>
+                    <Text style={[
+                      styles.responseAnswerText,
+                      { color: r.is_correct ? '#15803D' : '#B91C1C' }
+                    ]}>
+                      {r.student_answer}
+                    </Text>
+                  </View>
+                  {!r.is_correct && (
+                    <View style={styles.responseAnswerRow}>
+                      <Text style={styles.responseAnswerLabel}>Correct:</Text>
+                      <Text style={[styles.responseAnswerText, { color: '#15803D' }]}>
+                        {r.correct_answer}
+                      </Text>
+                    </View>
+                  )}
+                  <View style={styles.responseAnswerRow}>
+                    <Text style={styles.responseAnswerLabel}>Reasoning:</Text>
+                    <Text style={styles.responseAnswerText}>
+                      {Number(r.reasoning_score).toFixed(2)} / 1.00
+                    </Text>
+                  </View>
                 </View>
-              )}
-            </View>
 
-            {/* Student explanation */}
-            <View style={styles.explanationSection}>
-              <Text style={styles.explanationSectionTitle}>Your explanation:</Text>
-              <Text style={styles.explanationSectionText}>{item.explanation}</Text>
-            </View>
+                {r.student_explanation && (
+                  <View style={styles.responseExplanation}>
+                    <Text style={styles.responseExplanationLabel}>Your explanation:</Text>
+                    <Text style={styles.responseExplanationText}>"{r.student_explanation}"</Text>
+                  </View>
+                )}
 
-            {/* AI Feedback */}
-            <View style={styles.feedbackSection}>
-              <View style={styles.feedbackSectionHeader}>
-                <Ionicons name="chatbubble-outline" size={14} color="#2b6cb0" />
-                <Text style={styles.feedbackSectionTitle}>AI Feedback</Text>
-                <View style={[styles.expScorePill, { backgroundColor: getFinalScoreColor(item.explanationScore) + '20' }]}>
-                  <Text style={[styles.expScoreText, { color: getFinalScoreColor(item.explanationScore) }]}>
-                    Explanation: {item.explanationScore}/10
-                  </Text>
-                </View>
+                {r.reasoning_feedback && (
+                  <View style={styles.responseFeedback}>
+                    <Ionicons name="bulb-outline" size={14} color="#553C9A" />
+                    <Text style={styles.responseFeedbackText}>{r.reasoning_feedback}</Text>
+                  </View>
+                )}
               </View>
-              <Text style={styles.feedbackSectionText}>{item.feedback}</Text>
-            </View>
-
-            {/* Why this answer */}
-            {item.questionExplanation && (
-              <View style={styles.whySection}>
-                <View style={styles.whySectionHeader}>
-                  <Ionicons name="bulb-outline" size={14} color="#d97706" />
-                  <Text style={styles.whySectionTitle}>Why this is the answer</Text>
-                </View>
-                <Text style={styles.whySectionText}>{item.questionExplanation}</Text>
-              </View>
-            )}
+            ))}
           </View>
         )}
-      </TouchableOpacity>
-    );
-  };
 
-  return (
-    <SafeAreaView style={styles.container}>
+        {/* Bottom spacer */}
+        <View style={{ height: 100 }} />
+      </ScrollView>
 
-      {/* Header */}
-      <LinearGradient colors={['#1a365d', '#2b6cb0']} style={styles.header}>
-        <Text style={styles.headerTitle}>Quiz Complete!</Text>
-        <Text style={styles.headerSub}>{field_of_interest}</Text>
-      </LinearGradient>
+      {/* Action footer */}
+      <View style={styles.footer}>
+      <TouchableOpacity
+        style={styles.secondaryButton}
+        onPress={() => navigation.reset({
+          index: 1,
+          routes: [
+            { name: 'StudentDashboard', params: { student } },
+            { name: 'QuizIntro', params: { student } },
+          ],
+        })}
+      >
+          <Ionicons name="home-outline" size={18} color="#475569" />
+          <Text style={styles.secondaryButtonText}>Done</Text>
+        </TouchableOpacity>
 
-      <FlatList
-        data={responses}
-        keyExtractor={(_, index) => index.toString()}
-        renderItem={renderResponse}
-        contentContainerStyle={styles.listContent}
-        ListHeaderComponent={
-          <>
-            {/* Score circle */}
-            <View style={styles.scoreSection}>
-              <View style={[styles.scoreCircle, { borderColor: scoreColor }]}>
-                <Text style={[styles.scoreNumber, { color: scoreColor }]}>{skillScore}</Text>
-                <Text style={[styles.scoreOutOf, { color: scoreColor }]}>/100</Text>
-              </View>
-              <Text style={[styles.scoreLabel, { color: scoreColor }]}>
-                {getScoreLabel(skillScore)}
-              </Text>
-              <Text style={styles.scoreMessage}>{getScoreMessage(skillScore)}</Text>
-              {timeUp && (
-              <View style={styles.timeUpBanner}>
-                <Ionicons name="time-outline" size={18} color="#c53030" />
-                <Text style={styles.timeUpText}>
-                  Quiz ended — time ran out before all questions were answered
-                </Text>
-              </View>
-            )}
-            </View>
-
-            {/* Summary stats */}
-            <View style={styles.summaryCard}>
-              <View style={styles.summaryItem}>
-                <Ionicons name="checkmark-circle" size={22} color="#2f855a" />
-                <Text style={[styles.summaryValue, { color: '#2f855a' }]}>{correctCount}</Text>
-                <Text style={styles.summaryLabel}>Correct</Text>
-              </View>
-              <View style={styles.summaryDivider} />
-              <View style={styles.summaryItem}>
-                <Ionicons name="close-circle" size={22} color="#c53030" />
-                <Text style={[styles.summaryValue, { color: '#c53030' }]}>{wrongCount}</Text>
-                <Text style={styles.summaryLabel}>Wrong</Text>
-              </View>
-              <View style={styles.summaryDivider} />
-              <View style={styles.summaryItem}>
-                <Ionicons name="star" size={22} color={scoreColor} />
-                <Text style={[styles.summaryValue, { color: scoreColor }]}>{skillScore}</Text>
-                <Text style={styles.summaryLabel}>Skill Score</Text>
-              </View>
-            </View>
-
-            {/* Score bar */}
-            <View style={styles.scoreBarCard}>
-              <View style={styles.scoreBar}>
-                <View style={[styles.scoreBarFill, { width: `${skillScore}%`, backgroundColor: scoreColor }]} />
-              </View>
-              <View style={styles.scoreBarLabels}>
-                <Text style={[styles.scoreBarLabel, { color: '#c53030' }]}>Needs Work</Text>
-                <Text style={[styles.scoreBarLabel, { color: '#d97706' }]}>Average</Text>
-                <Text style={[styles.scoreBarLabel, { color: '#2f855a' }]}>Excellent</Text>
-              </View>
-            </View>
-
-            <Text style={styles.breakdownTitle}>Question Breakdown</Text>
-            <Text style={styles.breakdownHint}>Tap any question to see details</Text>
-          </>
-        }
-        ListFooterComponent={
-          <View style={styles.footer}>
-            <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={() => navigation.navigate('StudentDashboard', { student })}
-              activeOpacity={0.8}
-            >
-              <LinearGradient colors={['#1a365d', '#2b6cb0']} style={styles.buttonGradient}>
-                <Ionicons name="home-outline" size={20} color="#FFF" />
-                <Text style={styles.primaryButtonText}>Back to Dashboard</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => navigation.navigate('QuizIntro', { student })}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="refresh-outline" size={20} color="#2b6cb0" />
-              <Text style={styles.secondaryButtonText}>Retake Quiz</Text>
-            </TouchableOpacity>
-          </View>
-        }
-      />
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={() => navigation.reset({
+            index: 2,
+            routes: [
+              { name: 'StudentDashboard', params: { student } },
+              { name: 'QuizIntro', params: { student } },
+              { name: 'QuizFieldSelection', params: { student } },
+            ],
+          })}
+        >
+          <LinearGradient
+            colors={['#1a365d', '#553C9A']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.primaryButtonGradient}
+          >
+            <Ionicons name="refresh" size={18} color="#FFF" />
+            <Text style={styles.primaryButtonText}>Take Another Quiz</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  header: { alignItems: 'center', paddingTop: 50, paddingBottom: 30, paddingHorizontal: 20 },
-  headerTitle: { fontSize: 26, fontWeight: '800', color: '#FFF', marginBottom: 4 },
-  headerSub: { fontSize: 14, color: 'rgba(255,255,255,0.8)' },
-  listContent: { padding: 16, paddingBottom: 20 },
+  safeArea: { flex: 1, backgroundColor: '#F8FAFC' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
-  // Score section
-  scoreSection: { alignItems: 'center', marginBottom: 20 },
-  scoreCircle: {
-    width: 130, height: 130, borderRadius: 65, borderWidth: 6,
-    justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF',
-    marginBottom: 12, elevation: 6,
-    shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 12,
+  scrollContent: {
+    padding: 16,
   },
-  scoreNumber: { fontSize: 44, fontWeight: '800' },
-  scoreOutOf: { fontSize: 14, fontWeight: '600' },
-  scoreLabel: { fontSize: 22, fontWeight: '800', marginBottom: 8 },
-  scoreMessage: { fontSize: 13, color: '#64748B', textAlign: 'center', lineHeight: 20, paddingHorizontal: 20 },
-  timeUpBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#FEE2E2', borderRadius: 12, padding: 12,
-    marginTop: 10, borderLeftWidth: 4, borderLeftColor: '#c53030',
-  },
-  timeUpText: { flex: 1, fontSize: 13, color: '#c53030', fontWeight: '600' },
-  // Summary card
-  summaryCard: {
-    flexDirection: 'row', backgroundColor: '#FFF', borderRadius: 18,
-    padding: 20, marginBottom: 14, justifyContent: 'space-around',
-    elevation: 3, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8,
-  },
-  summaryItem: { alignItems: 'center', gap: 6 },
-  summaryValue: { fontSize: 22, fontWeight: '800' },
-  summaryLabel: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
-  summaryDivider: { width: 1, backgroundColor: '#E2E8F0' },
 
-  // Score bar
-  scoreBarCard: {
-    backgroundColor: '#FFF', borderRadius: 18, padding: 16,
-    marginBottom: 20, elevation: 3,
+  heroCard: {
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    marginBottom: 16,
+    position: 'relative',
   },
-  scoreBar: { height: 10, backgroundColor: '#E2E8F0', borderRadius: 5, overflow: 'hidden', marginBottom: 8 },
-  scoreBarFill: { height: '100%', borderRadius: 5 },
-  scoreBarLabels: { flexDirection: 'row', justifyContent: 'space-between' },
-  scoreBarLabel: { fontSize: 10, fontWeight: '600' },
+  closeBtn: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    padding: 6,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 12,
+  },
+  heroIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  heroLabel: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginBottom: 4,
+  },
+  heroLevel: {
+    color: '#FFF',
+    fontSize: 32,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+  },
+  heroRange: {
+    color: 'rgba(255,255,255,0.65)',
+    fontSize: 12,
+    marginTop: 2,
+    marginBottom: 16,
+  },
+  scoreContainer: {
+    alignItems: 'center',
+    marginBottom: 16,
+    padding: 12,
+    paddingHorizontal: 24,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  scoreValue: {
+    color: '#FFF',
+    fontSize: 40,
+    fontWeight: '900',
+    letterSpacing: -1,
+  },
+  scoreLabel: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  heroDescription: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 19,
+    fontStyle: 'italic',
+  },
 
-  // Breakdown
-  breakdownTitle: { fontSize: 17, fontWeight: '800', color: '#1E293B', marginBottom: 4 },
-  breakdownHint: { fontSize: 12, color: '#94A3B8', marginBottom: 12 },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 16,
+  },
+  statBox: {
+    width: '48%',
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 14,
+    alignItems: 'center',
+    gap: 4,
+    elevation: 1,
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#1E293B',
+  },
+  statLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
 
-  // Response card
+  breakdownCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    elevation: 1,
+  },
+  breakdownTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginBottom: 12,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingVertical: 6,
+  },
+  breakdownIcon: {
+    paddingTop: 2,
+  },
+  breakdownText: {
+    flex: 1,
+  },
+  breakdownLine: {
+    fontSize: 13,
+    color: '#475569',
+    lineHeight: 18,
+  },
+  breakdownBold: {
+    color: '#1E293B',
+    fontWeight: '700',
+  },
+
+  placeholderCard: {
+    backgroundColor: '#FAF5FF',
+    borderRadius: 14,
+    padding: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E9D8FD',
+    marginBottom: 16,
+  },
+  placeholderIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 16,
+    backgroundColor: '#FFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  placeholderTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#553C9A',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  placeholderText: {
+    fontSize: 13,
+    color: '#6B21A8',
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+  placeholderTags: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  placeholderTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  placeholderTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#553C9A',
+  },
+
+  reviewButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 14,
+    elevation: 1,
+  },
+  reviewButtonText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#475569',
+    fontWeight: '600',
+  },
+
+  responsesContainer: {
+    marginTop: 12,
+    gap: 12,
+  },
   responseCard: {
-    backgroundColor: '#FFF', borderRadius: 14, padding: 14,
-    marginBottom: 10, borderLeftWidth: 4, elevation: 2,
-    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6,
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 14,
+    elevation: 1,
   },
-  responseHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
-  responseHeaderLeft: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, flex: 1 },
-  responseNumberCircle: {
-    width: 30, height: 30, borderRadius: 15,
-    justifyContent: 'center', alignItems: 'center',
+  responseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
   },
-  responseNumber: { fontSize: 13, fontWeight: '800' },
-  responseQuestion: { fontSize: 13, fontWeight: '600', color: '#1E293B', lineHeight: 18, flex: 1 },
-  responseMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
-  typePill: { backgroundColor: '#EFF6FF', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
-  typePillText: { fontSize: 10, fontWeight: '700', color: '#2b6cb0' },
-  difficultyText: { fontSize: 10, color: '#94A3B8', fontWeight: '600' },
-  responseHeaderRight: { alignItems: 'center', marginLeft: 8 },
-  scoreCircleSmall: {
-    width: 44, height: 44, borderRadius: 22, borderWidth: 2,
-    justifyContent: 'center', alignItems: 'center',
+  responseNum: {
+    backgroundColor: '#1a365d',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
   },
-  scoreCircleSmallText: { fontSize: 11, fontWeight: '800' },
+  responseNumText: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  responseHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  responseBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  responseBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  responseScore: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#553C9A',
+  },
+  responseQuestion: {
+    fontSize: 12,
+    color: '#475569',
+    lineHeight: 17,
+    marginBottom: 10,
+  },
+  responseAnswers: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    padding: 10,
+    gap: 4,
+    marginBottom: 8,
+  },
+  responseAnswerRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  responseAnswerLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '700',
+    width: 70,
+  },
+  responseAnswerText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#1E293B',
+    fontWeight: '600',
+  },
+  responseExplanation: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 6,
+  },
+  responseExplanationLabel: {
+    fontSize: 10,
+    color: '#64748B',
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  responseExplanationText: {
+    fontSize: 11,
+    color: '#475569',
+    fontStyle: 'italic',
+  },
+  responseFeedback: {
+    flexDirection: 'row',
+    gap: 6,
+    backgroundColor: '#FAF5FF',
+    borderRadius: 8,
+    padding: 8,
+    borderLeftWidth: 2,
+    borderLeftColor: '#553C9A',
+  },
+  responseFeedbackText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#553C9A',
+    lineHeight: 16,
+  },
 
-  // Expanded details
-  responseDetails: { marginTop: 10 },
-  detailsDivider: { height: 1, backgroundColor: '#F1F5F9', marginBottom: 12 },
-  codeBlock: { backgroundColor: '#1E293B', borderRadius: 10, padding: 12, marginBottom: 10 },
-  codeText: { fontFamily: 'monospace', fontSize: 12, color: '#E2E8F0', lineHeight: 18 },
-  codeLine: { flexDirection: 'row', gap: 6, marginBottom: 2 },
-  codeLineLabel: { fontSize: 12, fontWeight: '700', color: '#FFA726', fontFamily: 'monospace', minWidth: 18 },
-  codeLineText: { fontSize: 12, color: '#E2E8F0', fontFamily: 'monospace', flex: 1 },
-
-  // Options
-  optionRow: {
-    flexDirection: 'row', alignItems: 'center', padding: 10,
-    borderRadius: 8, borderWidth: 1, marginBottom: 6, gap: 8,
+  footer: {
+    flexDirection: 'row',
+    gap: 10,
+    padding: 16,
+    backgroundColor: '#FFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
   },
-  optionKey: { fontSize: 13, fontWeight: '800', minWidth: 20 },
-  optionValue: { flex: 1, fontSize: 13 },
-
-  // Answer summary
-  answerSummary: { flexDirection: 'row', gap: 8, marginBottom: 10, flexWrap: 'wrap' },
-  answerPill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 },
-  answerPillText: { fontSize: 12, fontWeight: '700' },
-
-  // Explanation
-  explanationSection: {
-    backgroundColor: '#F8FAFC', borderRadius: 10, padding: 10, marginBottom: 8,
-  },
-  explanationSectionTitle: { fontSize: 11, fontWeight: '700', color: '#64748B', marginBottom: 4, textTransform: 'uppercase' },
-  explanationSectionText: { fontSize: 13, color: '#475569', lineHeight: 18 },
-
-  // AI Feedback
-  feedbackSection: {
-    backgroundColor: '#EFF6FF', borderRadius: 10, padding: 10,
-    marginBottom: 8, borderLeftWidth: 3, borderLeftColor: '#2b6cb0',
-  },
-  feedbackSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
-  feedbackSectionTitle: { fontSize: 11, fontWeight: '700', color: '#1a365d', flex: 1 },
-  expScorePill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
-  expScoreText: { fontSize: 10, fontWeight: '700' },
-  feedbackSectionText: { fontSize: 12, color: '#475569', lineHeight: 18 },
-
-  // Why answer
-  whySection: {
-    backgroundColor: '#FFFBEB', borderRadius: 10, padding: 10,
-    borderLeftWidth: 3, borderLeftColor: '#d97706',
-  },
-  whySectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
-  whySectionTitle: { fontSize: 11, fontWeight: '700', color: '#92400e' },
-  whySectionText: { fontSize: 12, color: '#78350f', lineHeight: 18 },
-
-  // Footer
-  footer: { marginTop: 20, gap: 12 },
-  primaryButton: { borderRadius: 16, overflow: 'hidden' },
-  buttonGradient: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 18, gap: 10,
-  },
-  primaryButtonText: { color: '#FFF', fontWeight: '800', fontSize: 16 },
   secondaryButton: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#FFF', borderRadius: 16, paddingVertical: 16, gap: 8,
-    borderWidth: 2, borderColor: '#2b6cb0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 14,
   },
-  secondaryButtonText: { color: '#2b6cb0', fontWeight: '800', fontSize: 16 },
+  secondaryButtonText: {
+    color: '#475569',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  primaryButton: {
+    flex: 1,
+    borderRadius: 14,
+    overflow: 'hidden',
+    elevation: 2,
+  },
+  primaryButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+  },
+  primaryButtonText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
 });
